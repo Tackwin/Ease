@@ -124,8 +124,11 @@ std::string ltrim_copy(std::string s) {
 }
 
 bool contains(const std::filesystem::path& path, const std::filesystem::path& parent) noexcept {
-	return std::search(path.begin(), path.end(), parent.begin(), parent.end()) != path.end();
+	std::string a = path.lexically_normal().generic_string();
+	std::string b = parent.lexically_normal().generic_string();
+	return a.rfind(b, 0) == 0;
 }
+
 
 #define NS Ease
 
