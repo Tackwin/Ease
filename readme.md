@@ -38,7 +38,7 @@ clang++ -std=c++17 Build.cpp && ./a.out
 ```
 
 
-One more example, the actual Build.cpp used to build BuildSelf itself ! :)
+One more example, the actual Build.cpp used to build Ease itself ! :)
 ```c++
 #include "src/BuildSelf.hpp" // Can't use BS.hpp since we are building it
 #include "src/BuildSelf.cpp"
