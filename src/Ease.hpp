@@ -1,5 +1,5 @@
-#ifndef BUILD_SELF_HPP
-#define BUILD_SELF_HPP
+#ifndef EASE_HPP
+#define EASE_HPP
 
 #define _CRT_SECURE_NO_WARNINGS
 #include <vector>
@@ -8,7 +8,7 @@
 #include <map>
 #include <optional>
 
-namespace BuildSelf {
+namespace Ease {
 
 struct Flags {
 
