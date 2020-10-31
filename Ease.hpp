@@ -123,16 +123,10 @@ std::string ltrim_copy(std::string s) {
 	return s;
 }
 
-bool contains(const std::filesystem::path& path, const std::filesystem::path& parent) noexcept {
-	std::string a = path.lexically_normal().generic_string();
-	std::string b = parent.lexically_normal().generic_string();
-	return a.rfind(b, 0) == 0;
-}
-
-
 #define NS Ease
 
 std::filesystem::path Default_State_File = "build/state.txt";
+std::filesystem::path Working_Directory;
 
 std::string get_compile_flag(NS::Build::Cli cli, NS::Build::Std_Ver std_ver) noexcept;
 std::string get_exe_output_flag(NS::Build::Cli cli, std::string_view str) noexcept;
@@ -145,6 +139,9 @@ std::string get_link_flag(NS::Build::Cli cli, std::string_view str) noexcept;
 std::string get_define_flag(NS::Build::Cli cli, std::string_view str) noexcept;
 std::string get_optimisation_flag(NS::Build::Cli cli) noexcept;
 std::string get_prepocessor_flag(NS::Build::Cli cli) noexcept;
+
+std::uint64_t hash(const std::string& str) noexcept;
+std::string unique_name(const std::filesystem::path& path) noexcept;
 
 // FILE IO
 void dump_to_file(std::string_view str, const std::filesystem::path& p) noexcept;
@@ -249,25 +246,35 @@ NS::Build NS::Build::get_default(::NS::Flags flags) noexcept {
 	return build;
 }
 void NS::Build::add_library(const std::filesystem::path& f) noexcept {
-	link_files.push_back(f.lexically_normal());
+	auto x = f;
+	x = x.lexically_normal();
+	link_files.push_back(x);
 }
 void NS::Build::add_source(const std::filesystem::path& f) noexcept {
-	source_files.push_back(f.lexically_normal());
+	auto x = f;
+	x = x.lexically_normal();
+	source_files.push_back(x);
 }
 void NS::Build::add_source_recursively(const std::filesystem::path& f) noexcept {
 	for (auto& x : std::filesystem::recursive_directory_iterator(f)) {
 		if (!std::filesystem::is_regular_file(x)) continue;
 		if (x.path().extension() != ".c" && x.path().extension() != ".cpp") continue;
 
-		add_source(x);
+		auto y = x.path();
+		y = y.lexically_normal();
+		add_source(y);
 	}
 }
 
 void NS::Build::add_include(const std::filesystem::path& f) noexcept {
-	header_files.push_back(f.lexically_normal());
+	auto x = f;
+	x = x.lexically_normal();
+	header_files.push_back(x);
 }
 void NS::Build::add_header(const std::filesystem::path& f) noexcept {
-	header_files.push_back(f.lexically_normal());
+	auto x = f;
+	x = x.lexically_normal();
+	header_files.push_back(x);
 }
 void NS::Build::add_define(std::string str) noexcept {
 	defines.push_back(std::move(str));
@@ -320,7 +327,8 @@ NS::State construct_new_state(const std::filesystem::path& p) noexcept {
 		if (x.path().extension() != ".pre") continue;
 
 		auto file = read_file(x);
-		auto f = x.path().lexically_relative(p);
+		auto f = x.path();
+		f = f.lexically_relative(p);
 		f = f.replace_extension("");
 		std::uint64_t hash = std::hash<std::string>()(file);
 		s.files[f] = hash;
@@ -370,13 +378,15 @@ NS::Commands compile_command_exe(NS::State& state, const NS::Build& b) noexcept 
 	for (auto x : b.source_files) {
 
 		auto c = x;
-		auto o = "build" / x.replace_extension(".o");
+
+		std::filesystem::path o = "build/";
+		o += unique_name(x) + ".o";
 		o = o.lexically_normal();
+
 		object_files.push_back(o);
 		if (b.flags.link_only) continue;
 
-		auto test_file = x;
-		test_file = test_file.replace_extension("");
+		auto test_file = unique_name(x);
 
 		// Check if this files has not changed
 		// (so it must first exists)
@@ -434,7 +444,8 @@ NS::Commands compile_command_incremetal_check(const NS::Build& b) noexcept {
 	// First run preprocessor to chech for need to recompilation
 	for (auto x : b.source_files) {
 		auto f = x;
-		auto p = "temp" / x.replace_extension(".pre");
+		std::filesystem::path p = "temp/";
+		p += unique_name(x) + ".pre";
 		p = p.lexically_normal();
 
 		command = b.compiler.generic_string();
@@ -460,31 +471,6 @@ NS::Commands compile_command_incremetal_check(const NS::Build& b) noexcept {
 	}
 
 	return commands;
-}
-
-std::vector<std::filesystem::path> get_dir_tree(
-	const std::filesystem::path& p,
-	const std::vector<std::filesystem::path>& exclude
-) noexcept {
-	std::vector<std::filesystem::path> to_make;
-	for (auto x : std::filesystem::recursive_directory_iterator(p)) {
-		if (!std::filesystem::is_directory(x)) continue;
-		for (auto& y : exclude) {
-			if (contains(p / x, y)) goto end_loop;
-		}
-		to_make.push_back(std::filesystem::relative(x, p));
-end_loop:
-		;
-	}
-
-	return to_make;
-}
-
-void copy_dir_tree(
-	const std::vector<std::filesystem::path>& to_make,
-	const std::filesystem::path& to
-) noexcept {
-	for (auto& x : to_make) std::filesystem::create_directories((to / x).lexically_normal());
 }
 
 void execute(const NS::Commands& c) noexcept {
@@ -530,11 +516,6 @@ int main(int argc, char** argv) {
 	case NS::Build::Target::Exe : {
 		std::filesystem::create_directory("build");
 		std::filesystem::create_directory("temp");
-
-		auto to_make = get_dir_tree(".", {"temp", "build"});
-		copy_dir_tree(to_make, "temp");
-		copy_dir_tree(to_make, "build");
-
 
 		::NS::Commands c;
 		if (!b.flags.link_only) {
@@ -729,6 +710,33 @@ std::string read_file(const std::filesystem::path& p) noexcept {
 
 	return string;
 }
+
+std::uint64_t hash(const std::string& str) noexcept {
+	return (std::uint64_t)std::hash<std::string>()(str);
+}
+
+constexpr char BASE64_TABLE[] =  {'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
+                                  'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
+                                  'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
+                                  'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f',
+                                  'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
+                                  'o', 'p', 'q', 'r', 's', 't', 'u', 'v',
+                                  'w', 'x', 'y', 'z', '0', '1', '2', '3',
+                                  '4', '5', '6', '7', '8', '9', '+', '-'};
+
+std::string unique_name(const std::filesystem::path& path) noexcept {
+	std::string ret = path.filename().generic_string();
+	auto h = hash(ret);
+
+	ret += "_";
+	ret += BASE64_TABLE[h % 64];
+	ret += BASE64_TABLE[(h / 64) % 64];
+	ret += BASE64_TABLE[(h / (64 * 64)) % 64];
+
+	return ret;
+}
+
+
 
 #undef NS
 
