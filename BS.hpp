@@ -83,7 +83,7 @@ struct Commands {
 };
 
 #endif
-#ifdef BS_implementation
+#ifndef BS_header_only
 #define _CRT_SECURE_NO_WARNINGS
 #include <stdio.h>
 #include <string.h>
