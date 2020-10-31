@@ -9,7 +9,7 @@ The build function will be called and the build will start according to the retu
 
 ## Installation
 
-Copy paste [BS.hpp][BS] in your directory.
+Copy paste [Ease.hpp][Ease_Header] in your directory.
 
 ## Usage example
 
@@ -61,6 +61,23 @@ Build build(Flags flags) noexcept {
 }
 ```
 
+## Running
+
+You get right off the bat some flags and parameter that you can use to configure your build.
+
+`./Build.exe -h` will show you an exhaustive list of flags and options.
+
+## Feature
+
+- Incremental Compiling (By running the preprocessor only and comparing hashes)
+- Can compile Header Only and Executables
+- Support for cl and gcc-family cli
+
+## Gallery
+
+Fantastic project that will tune your RGB led to get you in the mood for crewmate killing or some
+good tasking.
+[AmongUsXArduino][Inopio]
 
 ## Release History
 
@@ -68,4 +85,6 @@ Build build(Flags flags) noexcept {
     * Intial release
 
 <!-- Markdown link & img dfn's -->
-[BS]: https://github.com/Tackwin/BuildSelf/blob/master/BS.hpp
+[Ease_Header]: https://github.com/Tackwin/BuildSelf/blob/master/Ease.hpp
+[Inopio]: https://github.com/Inopio/AmongUsXArduino
+

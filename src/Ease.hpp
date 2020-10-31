@@ -16,6 +16,7 @@ struct Flags {
 	bool release = false;
 	bool scratch = false;
 	bool show_help = false;
+	bool link_only = false;
 	bool run_after_compilation = false;
 	std::optional<std::filesystem::path> state_file;
 	std::optional<std::filesystem::path> output;
@@ -46,6 +47,7 @@ struct Build {
 
 	enum class Std_Ver {
 		Cpp17 = 0,
+		Cpp20 = 1,
 		Count
 	};
 
@@ -73,6 +75,7 @@ struct Build {
 	void add_source_recursively(const std::filesystem::path& f) noexcept;
 	void add_library(const std::filesystem::path& f) noexcept;
 	void add_header(const std::filesystem::path& f) noexcept;
+	void add_include(const std::filesystem::path& f) noexcept;
 	void add_define(std::string str) noexcept;
 };
 
