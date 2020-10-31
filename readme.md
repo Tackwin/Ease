@@ -16,7 +16,8 @@ Copy paste [BS.hpp][BS] in your directory.
 You can look for example in the examples directory.
 Here is a quick and true snippet to build a simple project.
 ```c++
-#include "BS.hpp"
+// This is Build.cpp
+#include "Ease.hpp"
 
 Build build(Flags flags) noexcept {
 	Build build = Build::get_default(flags);
@@ -40,20 +41,21 @@ clang++ -std=c++17 Build.cpp && ./a.out
 
 One more example, the actual Build.cpp used to build Ease itself ! :)
 ```c++
-#include "src/BuildSelf.hpp" // Can't use BS.hpp since we are building it
-#include "src/BuildSelf.cpp"
+// This is Build.cpp
+#include "src/Ease.hpp" // Can't use Ease.hpp since we are building it
+#include "src/Ease.cpp"
 
 Build build(Flags flags) noexcept {
 	Build build = Build::get_default(flags);
 
-	build.name = "BS";
+	build.name = "Ease";
 	build.target = Build::Target::Header_Only; // We don't want to build a .exe
 	                                           // Just a single heade
 	build.invert_header_implementation_define = true; // To not have to define
 	                                                  // a stupid macro
 
-	build.add_source("./src/BuildSelf.cpp");
-	build.add_header("./src/BuildSelf.hpp");
+	build.add_source("./src/Ease.cpp");
+	build.add_header("./src/Ease.hpp");
 
 	return build;
 }
