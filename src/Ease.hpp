@@ -1,3 +1,37 @@
+#if 0
+echo \" <<'BATCH_SCRIPT' >/dev/null ">NUL "\" \`" <#"
+
+clang++ -o ./Build.exe ./Build.cpp -std=c++17 && Build.exe
+exit
+REM ====== Batch Script End ======
+GOTO :eof
+TYPE CON >NUL
+BATCH_SCRIPT
+#> | Out-Null
+
+
+echo \" <<'POWERSHELL_SCRIPT' >/dev/null # " | Out-Null
+# ===== PowerShell Script Begin =====
+clang++ -o ./Build.exe ./Build.cpp -std=c++17; Build.exe
+exit
+# ====== PowerShell Script End ======
+while ( ! $MyInvocation.MyCommand.Source ) { $input_line = Read-Host }
+exit
+<#
+POWERSHELL_SCRIPT
+
+
+set +o histexpand 2>/dev/null
+# ===== Bash Script Begin =====
+clang++ -o ./Build.exe ./Build.cpp -std=c++17 && Build.exe
+exit
+# ====== Bash Script End ======
+case $- in *"i"*) cat /dev/stdin >/dev/null ;; esac
+exit
+#>
+#endif
+
+
 #ifndef EASE_HPP
 #define EASE_HPP
 
@@ -18,6 +52,9 @@ struct Flags {
 	bool show_help = false;
 	bool link_only = false;
 	bool run_after_compilation = false;
+	
+	size_t j = 0;
+
 	std::optional<std::filesystem::path> state_file;
 	std::optional<std::filesystem::path> output;
 

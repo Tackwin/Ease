@@ -7,6 +7,7 @@
 #include <vector>
 #include <cctype>
 #include <locale>
+#include <thread>
 
 // trim from start (in place)
 void ltrim(std::string &s) {
@@ -89,6 +90,11 @@ NS::Flags NS::Flags::parse(int argc, char** argv) noexcept {
 			flags.state_file = argv[i];
 			flags.state_file = flags.state_file->lexically_normal();
 		}
+		if (strcmp(it, "-j") == 0) {
+			if (i + 1 >= argc) continue;
+			i++;
+			flags.j = std::stoi(argv[i]);
+		}
 		if (strcmp(it, "-o") == 0 || strcmp(it, "--output") == 0) {
 			if (i + 1 >= argc) continue;
 			i++;
@@ -96,6 +102,8 @@ NS::Flags NS::Flags::parse(int argc, char** argv) noexcept {
 			flags.output = flags.output->lexically_normal();
 		}
 	}
+
+	if (flags.j < 1) flags.j = 1;
 
 	return flags;
 }
@@ -112,6 +120,9 @@ const char* NS::Flags::help_message() noexcept {
 	
 	"-h|--help                    Will show this message, then exit.\n"
 	"                    Exemple: ./Build.exe -h | ./Build.exe --help\n\n"
+
+	"-j <n>                        Will use n threads.\n"
+	"                    Exemple: ./Build.exe -j 4\n\n"
 
 	"-l|--link                    Will only link the program, then exit. There must be a complete\n"
 	"                             state available. Will not check for incremental compilation.\n"
@@ -384,11 +395,17 @@ NS::Commands compile_command_incremetal_check(const NS::Build& b) noexcept {
 	return commands;
 }
 
-void execute(const NS::Commands& c) noexcept {
-	for (auto& x : c.commands) {
-		printf("%s\n", x.c_str());
-		system(x.c_str());
+void execute(const NS::Build& build, const NS::Commands& c) noexcept {
+	std::vector<std::thread> threads;
+	for (size_t i = 0; i < build.flags.j; ++i) {
+		threads.push_back(std::thread([&, i] {
+			for (size_t j = i; j < c.commands.size(); j += build.flags.j) {
+				printf("%s\n", c.commands[j].c_str());
+				system(c.commands[j].c_str());
+			}
+		}));
 	}
+	for (auto& x : threads) x.join();
 }
 
 int main(int argc, char** argv) {
@@ -431,7 +448,7 @@ int main(int argc, char** argv) {
 		::NS::Commands c;
 		if (!b.flags.link_only) {
 			c = compile_command_incremetal_check(b);
-			execute(c);
+			execute(b, c);
 			new_state = construct_new_state("temp");
 			if (!flags.scratch) {
 				old_state = NS::State::get_unchanged(old_state, new_state);
@@ -439,7 +456,7 @@ int main(int argc, char** argv) {
 		}
 
 		c = compile_command_exe(old_state, b);
-		execute(c);
+		execute(b, c);
 		if (flags.run_after_compilation) {
 			std::string run = b.name + ".exe";
 			system(run.c_str());
