@@ -51,6 +51,7 @@ struct Flags {
 	bool scratch = false;
 	bool show_help = false;
 	bool link_only = false;
+	bool generate_debug = false;
 	bool run_after_compilation = false;
 	
 	size_t j = 0;

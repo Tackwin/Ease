@@ -51,6 +51,7 @@ struct Flags {
 	bool scratch = false;
 	bool show_help = false;
 	bool link_only = false;
+	bool generate_debug = false;
 	bool run_after_compilation = false;
 	
 	size_t j = 0;
@@ -177,6 +178,8 @@ std::string get_link_flag(NS::Build::Cli cli, std::string_view str) noexcept;
 std::string get_define_flag(NS::Build::Cli cli, std::string_view str) noexcept;
 std::string get_optimisation_flag(NS::Build::Cli cli) noexcept;
 std::string get_prepocessor_flag(NS::Build::Cli cli) noexcept;
+std::string get_debug_symbol_compile_flag(NS::Build::Cli cli) noexcept;
+std::string get_debug_symbol_link_flag(NS::Build::Cli cli) noexcept;
 
 std::uint64_t hash(const std::string& str) noexcept;
 std::string unique_name(const std::filesystem::path& path) noexcept;
@@ -197,6 +200,9 @@ NS::Flags NS::Flags::parse(int argc, char** argv) noexcept {
 		}
 		if (strcmp(it, "--clean") == 0) {
 			flags.clean = true;
+		}
+		if (strcmp(it, "--debug") == 0) {
+			flags.generate_debug = true;
 		}
 		if (strcmp(it, "-l") == 0 || strcmp(it, "--link") == 0) {
 			flags.link_only = true;
@@ -253,10 +259,14 @@ const char* NS::Flags::help_message() noexcept {
 	"-l|--link                    Will only link the program, then exit. There must be a complete\n"
 	"                             state available. Will not check for incremental compilation.\n"
 	"                    Exemple: ./Build.exe -l | ./Build.exe --link\n\n"
-	
+
 	"--release                    Will compile the program using default option for release\n"
 	"                             (for instance, if the cli choosen is gcc, will compile using -O3)\n"
 	"                    Exemple: ./Build.exe --release\n\n"
+	
+	"--debug                      Will generate alongside the program debug symbols\n"
+	"                             It is not mutually exclusive with --release"
+	"                    Exemple: ./Build.exe --debug\n\n"
 	
 	"--scratch                    Disable incremental compilation and will clean the state file\n"
 	"                    Exemple: ./Build.exe --scratch\n\n"
@@ -276,7 +286,6 @@ const char* NS::Flags::help_message() noexcept {
 	"                    Exemple: ./Build.exe --output ./my_dir/               |\n"
 	"                    Exemple: ./Build.exe -o       ./my_dir/other_file.ext |\n"
 	"                    Exemple: ./Build.exe -o       ./my_dir/ \n"
-
 	;
 }
 
@@ -415,12 +424,9 @@ std::string compile_script_header_only(const NS::Build& b) noexcept {
 	return script;
 }
 
-NS::Commands compile_command_exe(NS::State& state, const NS::Build& b) noexcept {
+NS::Commands compile_command_object(NS::State& state, const NS::Build& b) noexcept {
 	NS::Commands commands;
-
 	std::string command;
-
-	std::vector<std::filesystem::path> object_files;
 
 	// Compile to -o
 	for (auto x : b.source_files) {
@@ -431,7 +437,6 @@ NS::Commands compile_command_exe(NS::State& state, const NS::Build& b) noexcept 
 		o += unique_name(x) + ".o";
 		o = o.lexically_normal();
 
-		object_files.push_back(o);
 		if (b.flags.link_only) continue;
 
 		auto test_file = unique_name(x);
@@ -457,19 +462,34 @@ NS::Commands compile_command_exe(NS::State& state, const NS::Build& b) noexcept 
 		for (auto& x : b.header_files) if (std::filesystem::is_regular_file(x))
 			command += " " + get_force_include_flag(b.cli, x.generic_string());
 
+		if (b.flags.generate_debug)
+			command += " " + get_debug_symbol_compile_flag(b.cli);
+
 		command += " " + c.generic_string();
 
 		commands.commands.push_back(command);
 	}
+	return commands;
+}
 
-	// Link
+NS::Commands compile_command_link_exe(const NS::Build& b) noexcept {
+	NS::Commands commands;
+	std::string command;
+
 	command = b.compiler.generic_string() + " ";
-	for (auto x : object_files) {
-		command += x.generic_string() + " ";
+	for (auto x : b.source_files) {
+		std::filesystem::path o = "build/";
+		o += unique_name(x) + ".o";
+		o = o.lexically_normal();
+
+		command += o.generic_string() + " ";
 	}
 	for (auto& x : b.link_files) {
 		command += get_link_flag(b.cli, x.generic_string()) + " ";
 	}
+
+	if (b.flags.generate_debug)
+		command += " " + get_debug_symbol_link_flag(b.cli);
 
 	std::string exe_name = b.name + ".exe";
 	if (b.flags.output) {
@@ -481,8 +501,6 @@ NS::Commands compile_command_exe(NS::State& state, const NS::Build& b) noexcept 
 
 	command += " " + get_exe_output_flag(b.cli, exe_name);
 	commands.commands.push_back(command);
-
-	return commands;
 }
 
 NS::Commands compile_command_incremetal_check(const NS::Build& b) noexcept {
@@ -572,29 +590,29 @@ int main(int argc, char** argv) {
 		std::filesystem::create_directory("temp");
 
 		::NS::Commands c;
-		if (!b.flags.link_only) {
+		if (b.flags.link_only) {
+			c = compile_command_link_exe(b);
+			execute(b, c);
+		} else {
 			c = compile_command_incremetal_check(b);
 			execute(b, c);
 			new_state = construct_new_state("temp");
-			if (!flags.scratch) {
-				old_state = NS::State::get_unchanged(old_state, new_state);
-			}
+			if (!flags.scratch) old_state = NS::State::get_unchanged(old_state, new_state);
+			c = compile_command_object(old_state, b);
+			execute(b, c);
 		}
 
-		c = compile_command_exe(old_state, b);
-		execute(b, c);
+		new_state.save_to_file(b.state_file);
+
 		if (flags.run_after_compilation) {
 			std::string run = b.name + ".exe";
 			system(run.c_str());
 		}
 
-		new_state.save_to_file(b.state_file);
-
 		std::filesystem::remove_all("temp");
 		break;
 	}
 	default:
-		_ASSERT(false);
 		break;
 	}
 
@@ -619,6 +637,32 @@ std::string get_prepocessor_flag(NS::Build::Cli cli) noexcept {
 		break;
 	case NS::Build::Cli::Cl :
 		return "/P";
+		break;
+	default:
+		break;
+	}
+	return "";
+}
+std::string get_debug_symbol_compile_flag(NS::Build::Cli cli) noexcept {
+	switch (cli) {
+	case NS::Build::Cli::Gcc :
+		return "-g";
+		break;
+	case NS::Build::Cli::Cl :
+		return "/Z7";
+		break;
+	default:
+		break;
+	}
+	return "";
+}
+std::string get_debug_symbol_compile_flag(NS::Build::Cli cli) noexcept {
+	switch (cli) {
+	case NS::Build::Cli::Gcc :
+		return "";
+		break;
+	case NS::Build::Cli::Cl :
+		return "/DEBUG";
 		break;
 	default:
 		break;
