@@ -71,6 +71,10 @@ struct State {
 	void save_to_file(const std::filesystem::path& p) noexcept;
 };
 
+struct Commands {
+	std::vector<std::string> commands;
+};
+
 struct Build {
 	enum class Target {
 		Header_Only,
@@ -105,6 +109,11 @@ struct Build {
 	std::vector<std::filesystem::path> header_files;
 	std::vector<std::filesystem::path> link_files;
 
+	std::vector<Commands> pre_compile;
+	std::vector<Commands> post_compile;
+	std::vector<Commands> pre_link;
+	std::vector<Commands> post_link;
+
 	std::vector<std::string> defines;
 
 	static Build get_default(Flags flags = {}) noexcept;
@@ -117,9 +126,6 @@ struct Build {
 	void add_define(std::string str) noexcept;
 };
 
-struct Commands {
-	std::vector<std::string> commands;
-};
 
 };
 

@@ -71,6 +71,10 @@ struct State {
 	void save_to_file(const std::filesystem::path& p) noexcept;
 };
 
+struct Commands {
+	std::vector<std::string> commands;
+};
+
 struct Build {
 	enum class Target {
 		Header_Only,
@@ -105,6 +109,11 @@ struct Build {
 	std::vector<std::filesystem::path> header_files;
 	std::vector<std::filesystem::path> link_files;
 
+	std::vector<Commands> pre_compile;
+	std::vector<Commands> post_compile;
+	std::vector<Commands> pre_link;
+	std::vector<Commands> post_link;
+
 	std::vector<std::string> defines;
 
 	static Build get_default(Flags flags = {}) noexcept;
@@ -117,9 +126,6 @@ struct Build {
 	void add_define(std::string str) noexcept;
 };
 
-struct Commands {
-	std::vector<std::string> commands;
-};
 
 };
 
@@ -581,26 +587,39 @@ int main(int argc, char** argv) {
 	std::string to_dump;
 	switch (b.target) {
 	case NS::Build::Target::Header_Only : {
+		for (auto& x : b.pre_compile) execute(b, x);
+
 		to_dump = compile_script_header_only(b);
 		dump_to_file(to_dump, b.name + ".hpp");
+
+		for (auto& x : b.post_compile) execute(b, x);
+		for (auto& x : b.pre_link) execute(b, x);
+		for (auto& x : b.post_link) execute(b, x);
 		break;
 	}
 	case NS::Build::Target::Exe : {
 		std::filesystem::create_directory("build");
 		std::filesystem::create_directory("temp");
 
+		for (auto& x : b.pre_compile) execute(b, x);
+
 		::NS::Commands c;
-		if (b.flags.link_only) {
-			c = compile_command_link_exe(b);
-			execute(b, c);
-		} else {
+		if (!b.flags.link_only) {
 			c = compile_command_incremetal_check(b);
 			execute(b, c);
 			new_state = construct_new_state("temp");
 			if (!flags.scratch) old_state = NS::State::get_unchanged(old_state, new_state);
+
+			for (auto& x : b.pre_compile) execute(b, x);
 			c = compile_command_object(old_state, b);
+			for (auto& x : b.post_compile) execute(b, x);
+
 			execute(b, c);
 		}
+		c = compile_command_link_exe(b);
+		for (auto& x : b.pre_link) execute(b, x);
+		execute(b, c);
+		for (auto& x : b.post_link) execute(b, x);
 
 		new_state.save_to_file(b.state_file);
 
