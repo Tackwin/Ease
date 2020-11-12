@@ -1,7 +1,12 @@
 #if 0
+# In cmd "type Ease.hpp | cmd"
+# In bash "type Ease.hpp | bash"
+#endif
+
+#if 0
 echo \" <<'BATCH_SCRIPT' >/dev/null ">NUL "\" \`" <#"
 
-clang++ -o ./Build.exe ./Build.cpp -std=c++17 && Build.exe
+clang++ -o ./Build.exe ./Build.cpp -std=c++17 && Build.exe %*
 exit
 REM ====== Batch Script End ======
 GOTO :eof
@@ -36,31 +41,43 @@ exit
 #define EASE_HPP
 
 #define _CRT_SECURE_NO_WARNINGS
+#include <map>
 #include <vector>
 #include <string>
-#include <filesystem>
-#include <map>
 #include <optional>
+#include <filesystem>
 
-namespace Ease {
+
+#ifndef EASE_NAMESPCE
+#define EASE_NAMESPACE Ease
+#endif
+
+namespace EASE_NAMESPACE {
+
+static std::filesystem::path Working_Directory;
 
 struct Flags {
 
 	bool clean = false;
 	bool release = false;
 	bool scratch = false;
+	bool install = false;
 	bool show_help = false;
 	bool link_only = false;
+	bool show_help_install = false;
 	bool generate_debug = false;
+	bool no_install_path = false;
 	bool run_after_compilation = false;
-	
+
 	size_t j = 0;
+	size_t verbose_level = 0;
 
 	std::optional<std::filesystem::path> state_file;
 	std::optional<std::filesystem::path> output;
 
 	static Flags parse(int argc, char** argv) noexcept;
 	static const char* help_message() noexcept;
+	static const char* help_install_message() noexcept;
 };
 
 struct State {
@@ -73,6 +90,12 @@ struct State {
 
 struct Commands {
 	std::vector<std::string> commands;
+	std::vector<std::string> short_desc;
+
+	std::vector<std::filesystem::path> file_output;
+
+	void add_command(std::string c) noexcept;
+	void add_command(std::string c, std::string desc) noexcept;
 };
 
 struct Build {
@@ -116,6 +139,8 @@ struct Build {
 
 	std::vector<std::string> defines;
 
+	std::vector<std::filesystem::path> to_install;
+
 	static Build get_default(Flags flags = {}) noexcept;
 
 	void add_source(const std::filesystem::path& f) noexcept;
@@ -124,10 +149,29 @@ struct Build {
 	void add_header(const std::filesystem::path& f) noexcept;
 	void add_include(const std::filesystem::path& f) noexcept;
 	void add_define(std::string str) noexcept;
+
+	void add_default_win32() noexcept;
 };
 
+struct Env {
+	static constexpr bool Win32 =
+		#ifdef _WIN32
+		true;
+		#else
+		false;
+		#endif
+};
+
+namespace details {
+	void install_build(const Build& b) noexcept;
+	std::filesystem::path get_output_path(const Build& b) noexcept;
+};
 
 };
+
+#ifndef EASE_NO_NAMESPACE
+using namespace Ease;
+#endif
 
 #endif
 #ifndef Ease_header_only
@@ -137,10 +181,17 @@ struct Build {
 #include <sstream>
 #include <algorithm>
 #include <filesystem>
+#include <cstdlib>
 #include <vector>
 #include <cctype>
 #include <locale>
 #include <thread>
+
+#ifndef EASE_HPP
+#include "Ease.hpp"
+#endif
+
+#define NS EASE_NAMESPACE
 
 // trim from start (in place)
 void ltrim(std::string &s) {
@@ -168,10 +219,7 @@ std::string ltrim_copy(std::string s) {
 	return s;
 }
 
-#define NS Ease
-
 std::filesystem::path Default_State_File = "build/state.txt";
-std::filesystem::path Working_Directory;
 
 std::string get_compile_flag(NS::Build::Cli cli, NS::Build::Std_Ver std_ver) noexcept;
 std::string get_exe_output_flag(NS::Build::Cli cli, std::string_view str) noexcept;
@@ -210,17 +258,31 @@ NS::Flags NS::Flags::parse(int argc, char** argv) noexcept {
 		if (strcmp(it, "--debug") == 0) {
 			flags.generate_debug = true;
 		}
+		if (strcmp(it, "--install") == 0) {
+			flags.install = true;
+		}
 		if (strcmp(it, "-l") == 0 || strcmp(it, "--link") == 0) {
 			flags.link_only = true;
 		}
 		if (strcmp(it, "-h") == 0 || strcmp(it, "--help") == 0) {
 			flags.show_help = true;
 		}
+		if (strcmp(it, "--help-install") == 0) {
+			flags.show_help_install = true;
+		}
+		if (strcmp(it, "--verbose") == 0) {
+			if (i + 1 >= argc) continue;
+			++i;
+			flags.verbose_level = std::stoi(argv[i]);
+		}
 		if (strcmp(it, "--release") == 0) {
 			flags.release = true;
 		}
 		if (strcmp(it, "--scratch") == 0) {
 			flags.scratch = true;
+		}
+		if (strcmp(it, "--no-install-path") == 0) {
+			flags.no_install_path = true;
 		}
 		if (strcmp(it, "--state-file") == 0) {
 			if (i + 1 >= argc) continue;
@@ -259,6 +321,9 @@ const char* NS::Flags::help_message() noexcept {
 	"-h|--help                    Will show this message, then exit.\n"
 	"                    Exemple: ./Build.exe -h | ./Build.exe --help\n\n"
 
+	"--help-install               Print informations about the install system.\n"
+	"                    Exemple: ./Build.exe --help-install\n\n"
+	
 	"-j <n>                        Will use n threads.\n"
 	"                    Exemple: ./Build.exe -j 4\n\n"
 
@@ -266,9 +331,24 @@ const char* NS::Flags::help_message() noexcept {
 	"                             state available. Will not check for incremental compilation.\n"
 	"                    Exemple: ./Build.exe -l | ./Build.exe --link\n\n"
 
+	"--verbose <level>            Change the level of verbosity.\n"
+	"                             Level 0 (default) will show a simple progress message.\n"
+	"                             Level 1 will show with each stage the commands executed.\n"
+	"                             Level 2 will show additional informations.\n"
+	"                    Exemple: ./Build.exe --verbose 0 | ./Build.exe --verbose 1\n\n"
+
 	"--release                    Will compile the program using default option for release\n"
 	"                             (for instance, if the cli choosen is gcc, will compile using -O3)\n"
 	"                    Exemple: ./Build.exe --release\n\n"
+
+	"--install                    Will install the program to be referenced by the EASE_PATH\n"
+	"                             Environment variable, for more information you can run me with\n"
+	"                             the flag --help-env\n"
+	"                    Exemple: ./Build.exe --install\n\n"
+	
+	"--no-install-path            Will *not* search your install variable for files to include\n"
+	"                             and or directory to look for librairies.\n"
+	"                    Exemple: ./Build.exe --no-install-path\n\n"
 	
 	"--debug                      Will generate alongside the program debug symbols\n"
 	"                             It is not mutually exclusive with --release"
@@ -295,6 +375,12 @@ const char* NS::Flags::help_message() noexcept {
 	;
 }
 
+const char* NS::Flags::help_install_message() noexcept {
+	return
+	"Idk man... figure it out :/.\n"
+	;
+}
+
 // ===================== FLAGS
 
 // ===================== BUILD
@@ -316,9 +402,24 @@ void NS::Build::add_library(const std::filesystem::path& f) noexcept {
 void NS::Build::add_source(const std::filesystem::path& f) noexcept {
 	auto x = f;
 	x = x.lexically_normal();
+	if (!std::filesystem::is_regular_file(x)) {
+		printf(
+			"Can't add source %s. %s does not point to a source.\n",
+			f.filename().generic_string().c_str(),
+			f.generic_string().c_str()
+		);
+		return;
+	}
 	source_files.push_back(x);
 }
 void NS::Build::add_source_recursively(const std::filesystem::path& f) noexcept {
+	if (!std::filesystem::is_directory(f)) {
+		printf(
+			"Can't search recursively for %s, it is not a directory.\n",
+			f.generic_string().c_str()
+		);
+		return;
+	}
 	for (auto& x : std::filesystem::recursive_directory_iterator(f)) {
 		if (!std::filesystem::is_regular_file(x)) continue;
 		if (x.path().extension() != ".c" && x.path().extension() != ".cpp") continue;
@@ -342,6 +443,25 @@ void NS::Build::add_header(const std::filesystem::path& f) noexcept {
 void NS::Build::add_define(std::string str) noexcept {
 	defines.push_back(std::move(str));
 }
+
+std::filesystem::path NS::details::get_output_path(const Build& b) noexcept {
+	std::filesystem::path out = b.name;
+	if (b.flags.output) {
+		out = *b.flags.output;
+		if (std::filesystem::is_directory(*b.flags.output)) {
+			out /= b.name;
+		}
+	}
+
+	return out;
+}
+
+void NS::Build::add_default_win32() noexcept {
+	add_library("Shell32");
+	add_library("Ole32");
+}
+
+
 // ===================== BUILD
 
 // ===================== State
@@ -400,6 +520,18 @@ NS::State construct_new_state(const std::filesystem::path& p) noexcept {
 }
 
 // ===================== State
+// ===================== Commands
+
+void NS::Commands::add_command(std::string c) noexcept {
+	add_command(c, std::move(c));
+}
+
+void NS::Commands::add_command(std::string c, std::string desc) noexcept {
+	commands.emplace_back(std::move(c));
+	short_desc.emplace_back(std::move(desc));
+}
+
+// ===================== Commands
 
 
 void concat(
@@ -417,17 +549,20 @@ void append(
 	dump_to_file(to_dump, dst);
 }
 
-std::string compile_script_header_only(const NS::Build& b) noexcept {
-	std::string script;
+std::string produce_single_header(NS::Build& b) noexcept {
+	std::string single;
 
-	for (auto& x : b.header_files) script += read_file(x) + "\n";
-	if (b.invert_header_implementation_define) script += "#ifndef " + b.name + "_header_only\n";
-	else script += "#ifdef " + b.name + "_implementation\n";
+	for (auto& x : b.header_files) single += read_file(x) + "\n";
+	if (b.invert_header_implementation_define) single += "#ifndef " + b.name + "_header_only\n";
+	else single += "#ifdef " + b.name + "_implementation\n";
 	for (auto& x : b.source_files) {
-		script += read_file(x) + "\n";
+		single += read_file(x) + "\n";
 	}
-	script += "#endif\n";
-	return script;
+	single += "#endif\n";
+
+	dump_to_file(single, b.name + ".hpp");
+
+	return single;
 }
 
 NS::Commands compile_command_object(NS::State& state, const NS::Build& b) noexcept {
@@ -473,7 +608,7 @@ NS::Commands compile_command_object(NS::State& state, const NS::Build& b) noexce
 
 		command += " " + c.generic_string();
 
-		commands.commands.push_back(command);
+		commands.add_command(command, "Compile " + x.filename().generic_string());
 	}
 	return commands;
 }
@@ -497,16 +632,13 @@ NS::Commands compile_command_link_exe(const NS::Build& b) noexcept {
 	if (b.flags.generate_debug)
 		command += " " + get_debug_symbol_link_flag(b.cli);
 
-	std::string exe_name = b.name + ".exe";
-	if (b.flags.output) {
-		exe_name = b.flags.output->generic_string();
-		if (std::filesystem::is_directory(*b.flags.output)) {
-			exe_name += b.name + ".exe";
-		}
-	}
+	auto exe_path = NS::details::get_output_path(b).replace_extension("exe");
 
-	command += " " + get_exe_output_flag(b.cli, exe_name);
-	commands.commands.push_back(command);
+	commands.file_output.push_back(exe_path);
+
+	command += " " + get_exe_output_flag(b.cli, exe_path.generic_string());
+	commands.add_command(command, "Link " + b.name);
+	return commands;
 }
 
 NS::Commands compile_command_incremetal_check(const NS::Build& b) noexcept {
@@ -539,7 +671,7 @@ NS::Commands compile_command_incremetal_check(const NS::Build& b) noexcept {
 
 		command += " " + f.generic_string();
 
-		commands.commands.push_back(command);
+		commands.add_command(command, "Preprocess " + x.filename().generic_string());
 	}
 
 	return commands;
@@ -547,15 +679,54 @@ NS::Commands compile_command_incremetal_check(const NS::Build& b) noexcept {
 
 void execute(const NS::Build& build, const NS::Commands& c) noexcept {
 	std::vector<std::thread> threads;
+	std::atomic<bool> stop_flag = false;
+
 	for (size_t i = 0; i < build.flags.j; ++i) {
 		threads.push_back(std::thread([&, i] {
 			for (size_t j = i; j < c.commands.size(); j += build.flags.j) {
-				printf("%s\n", c.commands[j].c_str());
-				system(c.commands[j].c_str());
+				if (stop_flag) return;
+
+				printf(
+					"[%*d/%*d] %s\n",
+					(int)(1 + std::log10((double)c.commands.size())),
+					(int)(1 + j),
+					(int)(1 + std::log10((double)c.commands.size())),
+					(int)c.commands.size(),
+					c.short_desc[j].c_str()
+				);
+				if (build.flags.verbose_level > 0) printf("%s\n", c.commands[j].c_str());
+				auto ret = system(c.commands[j].c_str());
+			
+				if (ret != 0) stop_flag = true;
 			}
 		}));
 	}
 	for (auto& x : threads) x.join();
+
+	if (stop_flag) {
+		printf("There was an error in the build. There should be more informations above.");
+	}
+}
+
+void add_install_path(NS::Build& b) noexcept {
+	if (auto ease_path = std::getenv("EASE_PATH"); ease_path) {
+		std::vector<std::string> dirs;
+		auto start = ease_path;
+		auto prev = start;
+		auto end = ease_path + strlen(ease_path);
+		dirs.resize(std::count(start, end, ';'));
+		
+		size_t i = 0;
+		while((start = std::find(start, end, ';')) != end) {
+			dirs[i++] = std::string(prev, start - prev);
+			prev = start;
+		}
+
+		for (auto& x : dirs) if (std::filesystem::is_directory(x)) {
+			b.add_include(x);
+			b.add_library(x);
+		}
+	}
 }
 
 int main(int argc, char** argv) {
@@ -563,16 +734,28 @@ int main(int argc, char** argv) {
 	auto flags = NS::Flags::parse(argc - 1, argv + 1);
 
 	auto b = build(flags);
+	NS::Working_Directory = std::filesystem::absolute(std::filesystem::current_path());
 
 	if (flags.show_help) {
 		printf("%s", NS::Flags::help_message());
 		return 0;
 	}
+	if (flags.show_help_install) {
+		printf("%s", NS::Flags::help_install_message());
+		return 0;
+	}
+
+	if (flags.verbose_level > 1) {
+		printf("Running in %s.\n", NS::Working_Directory.generic_string().c_str());
+	}
+
 	if (flags.clean) {
 		std::filesystem::remove_all("build");
 		std::filesystem::remove_all("temp");
 		return 0;
 	}
+
+	if (!flags.no_install_path) add_install_path(b);
 
 	NS::State old_state = {};
 	NS::State new_state = {};
@@ -589,8 +772,8 @@ int main(int argc, char** argv) {
 	case NS::Build::Target::Header_Only : {
 		for (auto& x : b.pre_compile) execute(b, x);
 
-		to_dump = compile_script_header_only(b);
-		dump_to_file(to_dump, b.name + ".hpp");
+		produce_single_header(b);
+		b.to_install.push_back(NS::details::get_output_path(b).replace_extension("hpp"));
 
 		for (auto& x : b.post_compile) execute(b, x);
 		for (auto& x : b.pre_link) execute(b, x);
@@ -598,6 +781,8 @@ int main(int argc, char** argv) {
 		break;
 	}
 	case NS::Build::Target::Exe : {
+		if (b.source_files.empty()) break;
+
 		std::filesystem::create_directory("build");
 		std::filesystem::create_directory("temp");
 
@@ -617,6 +802,11 @@ int main(int argc, char** argv) {
 			execute(b, c);
 		}
 		c = compile_command_link_exe(b);
+		// in the link phase we add the executable(s) to the install path.
+		for (auto& x : c.file_output) {
+			b.to_install.push_back(x);
+		}
+
 		for (auto& x : b.pre_link) execute(b, x);
 		execute(b, c);
 		for (auto& x : b.post_link) execute(b, x);
@@ -635,6 +825,7 @@ int main(int argc, char** argv) {
 		break;
 	}
 
+	if (b.flags.install) NS::details::install_build(b);
 
 	return 0;
 }
@@ -675,10 +866,10 @@ std::string get_debug_symbol_compile_flag(NS::Build::Cli cli) noexcept {
 	}
 	return "";
 }
-std::string get_debug_symbol_compile_flag(NS::Build::Cli cli) noexcept {
+std::string get_debug_symbol_link_flag(NS::Build::Cli cli) noexcept {
 	switch (cli) {
 	case NS::Build::Cli::Gcc :
-		return "";
+		return "-g";
 		break;
 	case NS::Build::Cli::Cl :
 		return "/DEBUG";
@@ -853,12 +1044,100 @@ std::string unique_name(const std::filesystem::path& path) noexcept {
 	return ret;
 }
 
-
-
 #undef NS
-
-#ifndef BS_NO_NAMESPACE
-using namespace Ease;
+#ifndef EASE_HPP
+#include "Ease.hpp"
 #endif
 
+#include <stdlib.h>
+#include <unordered_set>
+#include <fstream>
+
+#ifdef _WIN32
+#define setenv(x, y, z) ((int)_putenv_s((x), (y)));
+#endif
+
+#define NS EASE_NAMESPACE
+
+struct fs_hash {
+	std::size_t operator()(const std::filesystem::path& p) const {
+		return std::filesystem::hash_value(p);
+	}
+};
+
+std::filesystem::path get_user_path() noexcept;
+
+#ifdef _WIN32
+#include <ShlObj.h>
+#include <Windows.h>
+std::filesystem::path get_user_data_path() noexcept {
+	PWSTR buffer;
+	auto result = SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, NULL, &buffer);
+
+	if (result != 0) {
+		return std::filesystem::current_path();
+	}
+
+	auto str = std::wstring{ buffer };
+	std::filesystem::path p{ str };
+
+	CoTaskMemFree(buffer);
+	return p;
+}
+#else
+std::filesystem::path get_user_data_path() noexcept {
+	return "~";
+}
+#endif
+
+struct Install_State {
+	std::unordered_set<std::filesystem::path, fs_hash> dirs;
+};
+
+void NS::details::install_build(const NS::Build& b) noexcept {
+	std::filesystem::create_directories("install");
+
+	Install_State state;
+
+	std::ifstream in_file;
+	in_file.open(get_user_data_path() / ".ease/install.txt");
+	if (in_file.good()) {
+		for (std::string line; std::getline(in_file, line);) if (!line.empty()) {
+			state.dirs.insert(line);
+		}
+	} else {
+		std::filesystem::create_directories(get_user_data_path() / ".ease/");
+	}
+	in_file.close();
+
+	for (auto& x : b.to_install) if (std::filesystem::is_regular_file(x)) {
+
+		auto d = x.parent_path();
+		d = d.lexically_normal();
+		d = Working_Directory / "install" / x;
+		d = d.lexically_normal();
+
+		std::filesystem::create_directories(Working_Directory / "install" / x.parent_path());
+		if (b.flags.verbose_level > 0) {
+			printf(
+				"Installing %s to %s.\n", x.generic_string().c_str(), d.generic_string().c_str()
+			);
+		}
+		std::filesystem::copy_file(
+			x,
+			d,
+			std::filesystem::copy_options::overwrite_existing
+		);
+
+		state.dirs.insert(Working_Directory / "install");
+	}
+
+	std::ofstream out_file;
+	out_file.open(get_user_data_path() / ".ease/install.txt");
+	for (auto& x : state.dirs) {
+		out_file << x.generic_string() << "\n";
+	}
+	out_file.close();
+}
+#undef NS
 #endif

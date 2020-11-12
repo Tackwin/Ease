@@ -1,7 +1,12 @@
 #if 0
+# In cmd "type Ease.hpp | cmd"
+# In bash "type Ease.hpp | bash"
+#endif
+
+#if 0
 echo \" <<'BATCH_SCRIPT' >/dev/null ">NUL "\" \`" <#"
 
-clang++ -o ./Build.exe ./Build.cpp -std=c++17 && Build.exe
+clang++ -o ./Build.exe ./Build.cpp -std=c++17 && Build.exe %*
 exit
 REM ====== Batch Script End ======
 GOTO :eof
@@ -36,31 +41,43 @@ exit
 #define EASE_HPP
 
 #define _CRT_SECURE_NO_WARNINGS
+#include <map>
 #include <vector>
 #include <string>
-#include <filesystem>
-#include <map>
 #include <optional>
+#include <filesystem>
 
-namespace Ease {
+
+#ifndef EASE_NAMESPCE
+#define EASE_NAMESPACE Ease
+#endif
+
+namespace EASE_NAMESPACE {
+
+static std::filesystem::path Working_Directory;
 
 struct Flags {
 
 	bool clean = false;
 	bool release = false;
 	bool scratch = false;
+	bool install = false;
 	bool show_help = false;
 	bool link_only = false;
+	bool show_help_install = false;
 	bool generate_debug = false;
+	bool no_install_path = false;
 	bool run_after_compilation = false;
-	
+
 	size_t j = 0;
+	size_t verbose_level = 0;
 
 	std::optional<std::filesystem::path> state_file;
 	std::optional<std::filesystem::path> output;
 
 	static Flags parse(int argc, char** argv) noexcept;
 	static const char* help_message() noexcept;
+	static const char* help_install_message() noexcept;
 };
 
 struct State {
@@ -73,6 +90,12 @@ struct State {
 
 struct Commands {
 	std::vector<std::string> commands;
+	std::vector<std::string> short_desc;
+
+	std::vector<std::filesystem::path> file_output;
+
+	void add_command(std::string c) noexcept;
+	void add_command(std::string c, std::string desc) noexcept;
 };
 
 struct Build {
@@ -116,6 +139,8 @@ struct Build {
 
 	std::vector<std::string> defines;
 
+	std::vector<std::filesystem::path> to_install;
+
 	static Build get_default(Flags flags = {}) noexcept;
 
 	void add_source(const std::filesystem::path& f) noexcept;
@@ -124,9 +149,28 @@ struct Build {
 	void add_header(const std::filesystem::path& f) noexcept;
 	void add_include(const std::filesystem::path& f) noexcept;
 	void add_define(std::string str) noexcept;
+
+	void add_default_win32() noexcept;
 };
 
+struct Env {
+	static constexpr bool Win32 =
+		#ifdef _WIN32
+		true;
+		#else
+		false;
+		#endif
+};
+
+namespace details {
+	void install_build(const Build& b) noexcept;
+	std::filesystem::path get_output_path(const Build& b) noexcept;
+};
 
 };
+
+#ifndef EASE_NO_NAMESPACE
+using namespace Ease;
+#endif
 
 #endif
