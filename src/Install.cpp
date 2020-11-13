@@ -21,21 +21,14 @@ struct fs_hash {
 std::filesystem::path get_user_path() noexcept;
 
 #ifdef _WIN32
-#include <ShlObj.h>
-#include <Windows.h>
 std::filesystem::path get_user_data_path() noexcept {
-	PWSTR buffer;
-	auto result = SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, NULL, &buffer);
-
-	if (result != 0) {
-		return std::filesystem::current_path();
+	auto path = std::getenv("LOCALAPPDATA");
+	if (!path) {
+		printf("Error retrieving env variable.\n");
+		return "/";
+	} else {
+		return path;
 	}
-
-	auto str = std::wstring{ buffer };
-	std::filesystem::path p{ str };
-
-	CoTaskMemFree(buffer);
-	return p;
 }
 #else
 std::filesystem::path get_user_data_path() noexcept {
@@ -63,26 +56,48 @@ void NS::details::install_build(const NS::Build& b) noexcept {
 	}
 	in_file.close();
 
+	state.dirs.insert(Working_Directory / "install");
 	for (auto& x : b.to_install) if (std::filesystem::is_regular_file(x)) {
-
-		auto d = x.parent_path();
+		
+		auto d = x;
 		d = d.lexically_normal();
-		d = Working_Directory / "install" / x;
+		d = Working_Directory / "install" / d;
 		d = d.lexically_normal();
-
-		std::filesystem::create_directories(Working_Directory / "install" / x.parent_path());
 		if (b.flags.verbose_level > 0) {
 			printf(
 				"Installing %s to %s.\n", x.generic_string().c_str(), d.generic_string().c_str()
 			);
 		}
+
+		std::filesystem::create_directories(d.parent_path());
 		std::filesystem::copy_file(
 			x,
 			d,
 			std::filesystem::copy_options::overwrite_existing
 		);
+	}
 
-		state.dirs.insert(Working_Directory / "install");
+	for (size_t i = 0; i < b.export_files.size(); ++i)
+		if (std::filesystem::is_regular_file(b.export_files[i]))
+	{
+		auto d = b.export_dest_files[i];
+		d = d.lexically_normal();
+		d = Working_Directory / "install" / d;
+		d = d.lexically_normal();
+		if (b.flags.verbose_level > 0) {
+			printf(
+				"Installing %s to %s.\n",
+				b.export_files[i].generic_string().c_str(),
+				d.generic_string().c_str()
+			);
+		}
+
+		std::filesystem::create_directories(d.parent_path());
+		std::filesystem::copy_file(
+			b.export_files[i],
+			d,
+			std::filesystem::copy_options::overwrite_existing
+		);
 	}
 
 	std::ofstream out_file;

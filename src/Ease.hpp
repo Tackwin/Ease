@@ -64,9 +64,9 @@ struct Flags {
 	bool install = false;
 	bool show_help = false;
 	bool link_only = false;
-	bool show_help_install = false;
 	bool generate_debug = false;
 	bool no_install_path = false;
+	bool show_help_install = false;
 	bool run_after_compilation = false;
 
 	size_t j = 0;
@@ -96,11 +96,13 @@ struct Commands {
 
 	void add_command(std::string c) noexcept;
 	void add_command(std::string c, std::string desc) noexcept;
+	void add_command(std::string c, std::string desc, std::filesystem::path out) noexcept;
 };
 
 struct Build {
 	enum class Target {
 		Header_Only,
+		Static,
 		Exe
 	};
 
@@ -128,9 +130,17 @@ struct Build {
 	bool invert_header_implementation_define = false;
 
 	std::filesystem::path compiler;
+	std::filesystem::path archiver; // I don't really like to need llvm-ar or something
+	                                // i feel like we could do this ourself, it's just concatenating
+	                                // it mustn't be that complicated.
+
 	std::vector<std::filesystem::path> source_files;
 	std::vector<std::filesystem::path> header_files;
 	std::vector<std::filesystem::path> link_files;
+	std::vector<std::filesystem::path> static_files;
+
+	std::vector<std::filesystem::path> export_files;
+	std::vector<std::filesystem::path> export_dest_files;
 
 	std::vector<Commands> pre_compile;
 	std::vector<Commands> post_compile;
@@ -146,8 +156,11 @@ struct Build {
 	void add_source(const std::filesystem::path& f) noexcept;
 	void add_source_recursively(const std::filesystem::path& f) noexcept;
 	void add_library(const std::filesystem::path& f) noexcept;
+	void add_static(const std::filesystem::path& f) noexcept;
 	void add_header(const std::filesystem::path& f) noexcept;
 	void add_include(const std::filesystem::path& f) noexcept;
+	void add_export(const std::filesystem::path& f) noexcept;
+	void add_export(const std::filesystem::path& from, const std::filesystem::path& to) noexcept;
 	void add_define(std::string str) noexcept;
 
 	void add_default_win32() noexcept;

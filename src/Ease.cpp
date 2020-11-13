@@ -213,6 +213,7 @@ NS::Build NS::Build::get_default(::NS::Flags flags) noexcept {
 	build.target = Target::Exe;
 	build.std_ver = Std_Ver::Cpp17;
 	build.compiler = "clang++";
+	build.archiver = "llvm-ar";
 	build.name = "Run";
 	build.flags = flags;
 	return build;
@@ -221,6 +222,11 @@ void NS::Build::add_library(const std::filesystem::path& f) noexcept {
 	auto x = f;
 	x = x.lexically_normal();
 	link_files.push_back(x);
+}
+void NS::Build::add_static(const std::filesystem::path& f) noexcept {
+	auto x = f;
+	x = x.lexically_normal();
+	static_files.push_back(x);
 }
 void NS::Build::add_source(const std::filesystem::path& f) noexcept {
 	auto x = f;
@@ -265,6 +271,20 @@ void NS::Build::add_header(const std::filesystem::path& f) noexcept {
 }
 void NS::Build::add_define(std::string str) noexcept {
 	defines.push_back(std::move(str));
+}
+
+void NS::Build::add_export(const std::filesystem::path& f) noexcept {
+	add_export(f, f);
+}
+void NS::Build::add_export(
+	const std::filesystem::path& from, const std::filesystem::path& to
+) noexcept {
+	auto x = from;
+	auto y = to;
+	x = x.lexically_normal();
+	y = y.lexically_normal();
+	export_files.push_back(x);
+	export_dest_files.push_back(y);
 }
 
 std::filesystem::path NS::details::get_output_path(const Build& b) noexcept {
@@ -352,6 +372,14 @@ void NS::Commands::add_command(std::string c) noexcept {
 void NS::Commands::add_command(std::string c, std::string desc) noexcept {
 	commands.emplace_back(std::move(c));
 	short_desc.emplace_back(std::move(desc));
+}
+
+void NS::Commands::add_command(
+	std::string c, std::string desc, std::filesystem::path out
+) noexcept {
+	commands.emplace_back(std::move(c));
+	short_desc.emplace_back(std::move(desc));
+	file_output.emplace_back(std::move(out));
 }
 
 // ===================== Commands
@@ -457,10 +485,28 @@ NS::Commands compile_command_link_exe(const NS::Build& b) noexcept {
 
 	auto exe_path = NS::details::get_output_path(b).replace_extension("exe");
 
-	commands.file_output.push_back(exe_path);
-
 	command += " " + get_exe_output_flag(b.cli, exe_path.generic_string());
-	commands.add_command(command, "Link " + b.name);
+	commands.add_command(command, "Link " + b.name, exe_path);
+	return commands;
+}
+
+NS::Commands compile_command_link_static(const NS::Build& b) noexcept {
+	NS::Commands commands;
+	std::string command;
+
+	command = b.archiver.generic_string() + " rcs ";
+	auto static_path = NS::details::get_output_path(b).replace_extension("lib");
+	command += static_path.generic_string() + " ";
+
+	for (auto x : b.source_files) {
+		std::filesystem::path o = "build/";
+		o += unique_name(x) + ".o";
+		o = o.lexically_normal();
+
+		command += o.generic_string() + " ";
+	}
+
+	commands.add_command(command, "Archive " + b.name, static_path);
 	return commands;
 }
 
@@ -603,7 +649,9 @@ int main(int argc, char** argv) {
 		for (auto& x : b.post_link) execute(b, x);
 		break;
 	}
-	case NS::Build::Target::Exe : {
+	case NS::Build::Target::Exe :
+	case NS::Build::Target::Static :
+	{
 		if (b.source_files.empty()) break;
 
 		std::filesystem::create_directory("build");
@@ -624,7 +672,11 @@ int main(int argc, char** argv) {
 
 			execute(b, c);
 		}
-		c = compile_command_link_exe(b);
+		if (b.target == NS::Build::Target::Exe) {
+			c = compile_command_link_exe(b);
+		} else {
+			c = compile_command_link_static(b);
+		}
 		// in the link phase we add the executable(s) to the install path.
 		for (auto& x : c.file_output) {
 			b.to_install.push_back(x);
@@ -636,7 +688,7 @@ int main(int argc, char** argv) {
 
 		new_state.save_to_file(b.state_file);
 
-		if (flags.run_after_compilation) {
+		if (b.target == NS::Build::Target::Exe && flags.run_after_compilation) {
 			std::string run = b.name + ".exe";
 			system(run.c_str());
 		}

@@ -64,9 +64,9 @@ struct Flags {
 	bool install = false;
 	bool show_help = false;
 	bool link_only = false;
-	bool show_help_install = false;
 	bool generate_debug = false;
 	bool no_install_path = false;
+	bool show_help_install = false;
 	bool run_after_compilation = false;
 
 	size_t j = 0;
@@ -96,11 +96,13 @@ struct Commands {
 
 	void add_command(std::string c) noexcept;
 	void add_command(std::string c, std::string desc) noexcept;
+	void add_command(std::string c, std::string desc, std::filesystem::path out) noexcept;
 };
 
 struct Build {
 	enum class Target {
 		Header_Only,
+		Static,
 		Exe
 	};
 
@@ -128,9 +130,17 @@ struct Build {
 	bool invert_header_implementation_define = false;
 
 	std::filesystem::path compiler;
+	std::filesystem::path archiver; // I don't really like to need llvm-ar or something
+	                                // i feel like we could do this ourself, it's just concatenating
+	                                // it mustn't be that complicated.
+
 	std::vector<std::filesystem::path> source_files;
 	std::vector<std::filesystem::path> header_files;
 	std::vector<std::filesystem::path> link_files;
+	std::vector<std::filesystem::path> static_files;
+
+	std::vector<std::filesystem::path> export_files;
+	std::vector<std::filesystem::path> export_dest_files;
 
 	std::vector<Commands> pre_compile;
 	std::vector<Commands> post_compile;
@@ -146,8 +156,11 @@ struct Build {
 	void add_source(const std::filesystem::path& f) noexcept;
 	void add_source_recursively(const std::filesystem::path& f) noexcept;
 	void add_library(const std::filesystem::path& f) noexcept;
+	void add_static(const std::filesystem::path& f) noexcept;
 	void add_header(const std::filesystem::path& f) noexcept;
 	void add_include(const std::filesystem::path& f) noexcept;
+	void add_export(const std::filesystem::path& f) noexcept;
+	void add_export(const std::filesystem::path& from, const std::filesystem::path& to) noexcept;
 	void add_define(std::string str) noexcept;
 
 	void add_default_win32() noexcept;
@@ -390,6 +403,7 @@ NS::Build NS::Build::get_default(::NS::Flags flags) noexcept {
 	build.target = Target::Exe;
 	build.std_ver = Std_Ver::Cpp17;
 	build.compiler = "clang++";
+	build.archiver = "llvm-ar";
 	build.name = "Run";
 	build.flags = flags;
 	return build;
@@ -398,6 +412,11 @@ void NS::Build::add_library(const std::filesystem::path& f) noexcept {
 	auto x = f;
 	x = x.lexically_normal();
 	link_files.push_back(x);
+}
+void NS::Build::add_static(const std::filesystem::path& f) noexcept {
+	auto x = f;
+	x = x.lexically_normal();
+	static_files.push_back(x);
 }
 void NS::Build::add_source(const std::filesystem::path& f) noexcept {
 	auto x = f;
@@ -442,6 +461,20 @@ void NS::Build::add_header(const std::filesystem::path& f) noexcept {
 }
 void NS::Build::add_define(std::string str) noexcept {
 	defines.push_back(std::move(str));
+}
+
+void NS::Build::add_export(const std::filesystem::path& f) noexcept {
+	add_export(f, f);
+}
+void NS::Build::add_export(
+	const std::filesystem::path& from, const std::filesystem::path& to
+) noexcept {
+	auto x = from;
+	auto y = to;
+	x = x.lexically_normal();
+	y = y.lexically_normal();
+	export_files.push_back(x);
+	export_dest_files.push_back(y);
 }
 
 std::filesystem::path NS::details::get_output_path(const Build& b) noexcept {
@@ -529,6 +562,14 @@ void NS::Commands::add_command(std::string c) noexcept {
 void NS::Commands::add_command(std::string c, std::string desc) noexcept {
 	commands.emplace_back(std::move(c));
 	short_desc.emplace_back(std::move(desc));
+}
+
+void NS::Commands::add_command(
+	std::string c, std::string desc, std::filesystem::path out
+) noexcept {
+	commands.emplace_back(std::move(c));
+	short_desc.emplace_back(std::move(desc));
+	file_output.emplace_back(std::move(out));
 }
 
 // ===================== Commands
@@ -634,10 +675,28 @@ NS::Commands compile_command_link_exe(const NS::Build& b) noexcept {
 
 	auto exe_path = NS::details::get_output_path(b).replace_extension("exe");
 
-	commands.file_output.push_back(exe_path);
-
 	command += " " + get_exe_output_flag(b.cli, exe_path.generic_string());
-	commands.add_command(command, "Link " + b.name);
+	commands.add_command(command, "Link " + b.name, exe_path);
+	return commands;
+}
+
+NS::Commands compile_command_link_static(const NS::Build& b) noexcept {
+	NS::Commands commands;
+	std::string command;
+
+	command = b.archiver.generic_string() + " rcs ";
+	auto static_path = NS::details::get_output_path(b).replace_extension("lib");
+	command += static_path.generic_string() + " ";
+
+	for (auto x : b.source_files) {
+		std::filesystem::path o = "build/";
+		o += unique_name(x) + ".o";
+		o = o.lexically_normal();
+
+		command += o.generic_string() + " ";
+	}
+
+	commands.add_command(command, "Archive " + b.name, static_path);
 	return commands;
 }
 
@@ -780,7 +839,9 @@ int main(int argc, char** argv) {
 		for (auto& x : b.post_link) execute(b, x);
 		break;
 	}
-	case NS::Build::Target::Exe : {
+	case NS::Build::Target::Exe :
+	case NS::Build::Target::Static :
+	{
 		if (b.source_files.empty()) break;
 
 		std::filesystem::create_directory("build");
@@ -801,7 +862,11 @@ int main(int argc, char** argv) {
 
 			execute(b, c);
 		}
-		c = compile_command_link_exe(b);
+		if (b.target == NS::Build::Target::Exe) {
+			c = compile_command_link_exe(b);
+		} else {
+			c = compile_command_link_static(b);
+		}
 		// in the link phase we add the executable(s) to the install path.
 		for (auto& x : c.file_output) {
 			b.to_install.push_back(x);
@@ -813,7 +878,7 @@ int main(int argc, char** argv) {
 
 		new_state.save_to_file(b.state_file);
 
-		if (flags.run_after_compilation) {
+		if (b.target == NS::Build::Target::Exe && flags.run_after_compilation) {
 			std::string run = b.name + ".exe";
 			system(run.c_str());
 		}
@@ -1068,21 +1133,14 @@ struct fs_hash {
 std::filesystem::path get_user_path() noexcept;
 
 #ifdef _WIN32
-#include <ShlObj.h>
-#include <Windows.h>
 std::filesystem::path get_user_data_path() noexcept {
-	PWSTR buffer;
-	auto result = SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, NULL, &buffer);
-
-	if (result != 0) {
-		return std::filesystem::current_path();
+	auto path = std::getenv("LOCALAPPDATA");
+	if (!path) {
+		printf("Error retrieving env variable.\n");
+		return "/";
+	} else {
+		return path;
 	}
-
-	auto str = std::wstring{ buffer };
-	std::filesystem::path p{ str };
-
-	CoTaskMemFree(buffer);
-	return p;
 }
 #else
 std::filesystem::path get_user_data_path() noexcept {
@@ -1110,26 +1168,48 @@ void NS::details::install_build(const NS::Build& b) noexcept {
 	}
 	in_file.close();
 
+	state.dirs.insert(Working_Directory / "install");
 	for (auto& x : b.to_install) if (std::filesystem::is_regular_file(x)) {
-
-		auto d = x.parent_path();
+		
+		auto d = x;
 		d = d.lexically_normal();
-		d = Working_Directory / "install" / x;
+		d = Working_Directory / "install" / d;
 		d = d.lexically_normal();
-
-		std::filesystem::create_directories(Working_Directory / "install" / x.parent_path());
 		if (b.flags.verbose_level > 0) {
 			printf(
 				"Installing %s to %s.\n", x.generic_string().c_str(), d.generic_string().c_str()
 			);
 		}
+
+		std::filesystem::create_directories(d.parent_path());
 		std::filesystem::copy_file(
 			x,
 			d,
 			std::filesystem::copy_options::overwrite_existing
 		);
+	}
 
-		state.dirs.insert(Working_Directory / "install");
+	for (size_t i = 0; i < b.export_files.size(); ++i)
+		if (std::filesystem::is_regular_file(b.export_files[i]))
+	{
+		auto d = b.export_dest_files[i];
+		d = d.lexically_normal();
+		d = Working_Directory / "install" / d;
+		d = d.lexically_normal();
+		if (b.flags.verbose_level > 0) {
+			printf(
+				"Installing %s to %s.\n",
+				b.export_files[i].generic_string().c_str(),
+				d.generic_string().c_str()
+			);
+		}
+
+		std::filesystem::create_directories(d.parent_path());
+		std::filesystem::copy_file(
+			b.export_files[i],
+			d,
+			std::filesystem::copy_options::overwrite_existing
+		);
 	}
 
 	std::ofstream out_file;
