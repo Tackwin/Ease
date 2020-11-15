@@ -44,20 +44,6 @@ std::string ltrim_copy(std::string s) {
 
 std::filesystem::path Default_State_File = "build/state.txt";
 
-std::string get_compile_flag(NS::Build::Cli cli, NS::Build::Std_Ver std_ver) noexcept;
-std::string get_exe_output_flag(NS::Build::Cli cli, std::string_view str) noexcept;
-std::string get_object_output_flag(NS::Build::Cli cli, std::string_view str) noexcept;
-std::string get_preprocessor_output_flag(NS::Build::Cli cli, std::string_view str) noexcept;
-std::string get_force_include_flag(NS::Build::Cli cli, std::string_view str) noexcept;
-std::string get_compile_flag(NS::Build::Cli cli) noexcept;
-std::string get_include_flag(NS::Build::Cli cli, std::string_view str) noexcept;
-std::string get_link_flag(NS::Build::Cli cli, std::string_view str) noexcept;
-std::string get_define_flag(NS::Build::Cli cli, std::string_view str) noexcept;
-std::string get_optimisation_flag(NS::Build::Cli cli) noexcept;
-std::string get_prepocessor_flag(NS::Build::Cli cli) noexcept;
-std::string get_debug_symbol_compile_flag(NS::Build::Cli cli) noexcept;
-std::string get_debug_symbol_link_flag(NS::Build::Cli cli) noexcept;
-
 std::uint64_t hash(const std::string& str) noexcept;
 std::string unique_name(const std::filesystem::path& path) noexcept;
 
@@ -211,7 +197,7 @@ NS::Build NS::Build::get_default(::NS::Flags flags) noexcept {
 	NS::Build build;
 	build.cli = Cli::Gcc;
 	build.target = Target::Exe;
-	build.std_ver = Std_Ver::Cpp17;
+	build.std_ver = "c++17";
 	build.compiler = "clang++";
 	build.archiver = "llvm-ar";
 	build.name = "Run";
@@ -223,10 +209,10 @@ void NS::Build::add_library(const std::filesystem::path& f) noexcept {
 	x = x.lexically_normal();
 	link_files.push_back(x);
 }
-void NS::Build::add_static(const std::filesystem::path& f) noexcept {
+void NS::Build::add_library_path(const std::filesystem::path& f) noexcept {
 	auto x = f;
 	x = x.lexically_normal();
-	static_files.push_back(x);
+	lib_path.push_back(x);
 }
 void NS::Build::add_source(const std::filesystem::path& f) noexcept {
 	auto x = f;
@@ -257,12 +243,6 @@ void NS::Build::add_source_recursively(const std::filesystem::path& f) noexcept 
 		y = y.lexically_normal();
 		add_source(y);
 	}
-}
-
-void NS::Build::add_include(const std::filesystem::path& f) noexcept {
-	auto x = f;
-	x = x.lexically_normal();
-	header_files.push_back(x);
 }
 void NS::Build::add_header(const std::filesystem::path& f) noexcept {
 	auto x = f;
@@ -403,7 +383,8 @@ void append(
 std::string produce_single_header(NS::Build& b) noexcept {
 	std::string single;
 
-	for (auto& x : b.header_files) single += read_file(x) + "\n";
+	for (auto& x : b.header_files) if (std::filesystem::is_regular_file(x))
+		single += read_file(x) + "\n";
 	if (b.invert_header_implementation_define) single += "#ifndef " + b.name + "_header_only\n";
 	else single += "#ifdef " + b.name + "_implementation\n";
 	for (auto& x : b.source_files) {
@@ -417,6 +398,8 @@ std::string produce_single_header(NS::Build& b) noexcept {
 }
 
 NS::Commands compile_command_object(NS::State& state, const NS::Build& b) noexcept {
+	using namespace NS;
+	using namespace details;
 	NS::Commands commands;
 	std::string command;
 
@@ -438,24 +421,25 @@ NS::Commands compile_command_object(NS::State& state, const NS::Build& b) noexce
 		if (std::filesystem::is_regular_file(o) && state.files.count(test_file) > 0) continue;
 
 		command = b.compiler.generic_string();
-		command += " " + get_compile_flag(b.cli);
+		command += " " + get_cli_flag(b.cli, Cli_Opts::Compile);
+		command += " " + get_cli_flag(b.cli, Cli_Opts::Std_Version, b.std_ver);
 
 		if (b.flags.release)
-			command += " " + get_optimisation_flag(b.cli);
+			command += " " + get_cli_flag(b.cli, Cli_Opts::Optimisation);
 
-		command += " " + get_object_output_flag(b.cli, o.generic_string());
+		command += " " + get_cli_flag(b.cli, Cli_Opts::Object_Output, o.generic_string());
 
-		for (auto& d : b.defines) command += " " + get_define_flag(b.cli, d);
-			command += " " + get_compile_flag(b.cli, b.std_ver);
+		for (auto& d : b.defines) command += " " + get_cli_flag(b.cli, Cli_Opts::Define, d);
 
 		for (auto& x : b.header_files) if (std::filesystem::is_directory(x))
-			command += " " + get_include_flag(b.cli, x.generic_string());
+			command += " " + get_cli_flag(b.cli, Cli_Opts::Include, x.generic_string());
 
 		for (auto& x : b.header_files) if (std::filesystem::is_regular_file(x))
-			command += " " + get_force_include_flag(b.cli, x.generic_string());
+			command += " " + get_cli_flag(b.cli, Cli_Opts::Force_Include, x.generic_string());
 
 		if (b.flags.generate_debug)
-			command += " " + get_debug_symbol_compile_flag(b.cli);
+			command +=
+				" " + get_cli_flag(b.cli, Cli_Opts::Debug_Symbol_Compile, x.generic_string());
 
 		command += " " + c.generic_string();
 
@@ -465,6 +449,8 @@ NS::Commands compile_command_object(NS::State& state, const NS::Build& b) noexce
 }
 
 NS::Commands compile_command_link_exe(const NS::Build& b) noexcept {
+	using namespace NS;
+	using namespace details;
 	NS::Commands commands;
 	std::string command;
 
@@ -476,16 +462,17 @@ NS::Commands compile_command_link_exe(const NS::Build& b) noexcept {
 
 		command += o.generic_string() + " ";
 	}
-	for (auto& x : b.link_files) {
-		command += get_link_flag(b.cli, x.generic_string()) + " ";
-	}
+	for (auto& x : b.link_files)
+		command += get_cli_flag(b.cli, Cli_Opts::Link, x.generic_string()) + " ";
+	for (auto& x : b.lib_path)
+		command += get_cli_flag(b.cli, Cli_Opts::Lib_Path, x.generic_string()) + " ";
 
 	if (b.flags.generate_debug)
-		command += " " + get_debug_symbol_link_flag(b.cli);
+		command += get_cli_flag(b.cli, Cli_Opts::Debug_Symbol_Link) + " ";
 
 	auto exe_path = NS::details::get_output_path(b).replace_extension("exe");
 
-	command += " " + get_exe_output_flag(b.cli, exe_path.generic_string());
+	command += get_cli_flag(b.cli, Cli_Opts::Exe_Output, exe_path.generic_string()) + " ";
 	commands.add_command(command, "Link " + b.name, exe_path);
 	return commands;
 }
@@ -511,6 +498,8 @@ NS::Commands compile_command_link_static(const NS::Build& b) noexcept {
 }
 
 NS::Commands compile_command_incremetal_check(const NS::Build& b) noexcept {
+	using namespace NS;
+	using namespace details;
 	NS::Commands commands;
 	std::string command;
 
@@ -523,20 +512,18 @@ NS::Commands compile_command_incremetal_check(const NS::Build& b) noexcept {
 
 		command = b.compiler.generic_string();
 
-		command += " " + get_prepocessor_flag(b.cli);
-
-		command += " " + get_preprocessor_output_flag(b.cli, p.generic_string());
+		command += " " + get_cli_flag(b.cli, Cli_Opts::Preprocess);
+		command += " " + get_cli_flag(b.cli, Cli_Opts::Std_Version, b.std_ver);
+		command += " " + get_cli_flag(b.cli, Cli_Opts::Preprocessor_Output, p.generic_string());
 
 		for (auto& d : b.defines)
-			command += " " + get_define_flag(b.cli, d);
-
-		command += " " + get_compile_flag(b.cli, b.std_ver);
+			command += " " + get_cli_flag(b.cli, Cli_Opts::Define, d);
 
 		for (auto& x : b.header_files) if (std::filesystem::is_directory(x))
-			command += " " + get_include_flag(b.cli, x.generic_string());
+			command += " " + get_cli_flag(b.cli, Cli_Opts::Include, x.generic_string());
 
 		for (auto& x : b.header_files) if (std::filesystem::is_regular_file(x))
-			command += " " + get_force_include_flag(b.cli, x.generic_string());
+			command += " " + get_cli_flag(b.cli, Cli_Opts::Force_Include, x.generic_string());
 
 		command += " " + f.generic_string();
 
@@ -578,23 +565,10 @@ void execute(const NS::Build& build, const NS::Commands& c) noexcept {
 }
 
 void add_install_path(NS::Build& b) noexcept {
-	if (auto ease_path = std::getenv("EASE_PATH"); ease_path) {
-		std::vector<std::string> dirs;
-		auto start = ease_path;
-		auto prev = start;
-		auto end = ease_path + strlen(ease_path);
-		dirs.resize(std::count(start, end, ';'));
-		
-		size_t i = 0;
-		while((start = std::find(start, end, ';')) != end) {
-			dirs[i++] = std::string(prev, start - prev);
-			prev = start;
-		}
-
-		for (auto& x : dirs) if (std::filesystem::is_directory(x)) {
-			b.add_include(x);
-			b.add_library(x);
-		}
+	auto dirs = NS::details::get_installed_dirs(b);
+	for (auto& x : dirs) {
+		b.add_header(x);
+		b.add_library_path(x);
 	}
 }
 
@@ -706,173 +680,56 @@ int main(int argc, char** argv) {
 }
 #define main dummy_main
 
-std::string get_compile_flag(NS::Build::Cli cli, NS::Build::Std_Ver std_ver) noexcept {
-	const char* lookup[(size_t)NS::Build::Cli::Count][(size_t)NS::Build::Std_Ver::Count];
-	lookup[(size_t)NS::Build::Cli::Gcc][(size_t)NS::Build::Std_Ver::Cpp17] = "-std=c++17";
-	lookup[(size_t)NS::Build::Cli::Cl][(size_t)NS::Build::Std_Ver::Cpp17] = "/std:c++17";
-	lookup[(size_t)NS::Build::Cli::Gcc][(size_t)NS::Build::Std_Ver::Cpp20] = "-std=c++20";
-	lookup[(size_t)NS::Build::Cli::Cl][(size_t)NS::Build::Std_Ver::Cpp20] = "/std:c++20";
-	return lookup[(size_t)cli][(size_t)std_ver];
-}
+std::string NS::details::get_cli_flag(
+	NS::Build::Cli cli, NS::Cli_Opts opts, std::string_view param
+) noexcept {
+	#define X(a, b) \
+	switch(cli) { \
+		case NS::Build::Cli::Gcc : \
+			return (a); \
+		case NS::Build::Cli::Cl : \
+			return (b); \
+		default: \
+			return "???"; \
+	}
 
-std::string get_prepocessor_flag(NS::Build::Cli cli) noexcept {
-	switch (cli) {
-	case NS::Build::Cli::Gcc :
-		return "-E";
-		break;
-	case NS::Build::Cli::Cl :
-		return "/P";
-		break;
-	default:
-		break;
-	}
-	return "";
-}
-std::string get_debug_symbol_compile_flag(NS::Build::Cli cli) noexcept {
-	switch (cli) {
-	case NS::Build::Cli::Gcc :
-		return "-g";
-		break;
-	case NS::Build::Cli::Cl :
-		return "/Z7";
-		break;
-	default:
-		break;
-	}
-	return "";
-}
-std::string get_debug_symbol_link_flag(NS::Build::Cli cli) noexcept {
-	switch (cli) {
-	case NS::Build::Cli::Gcc :
-		return "-g";
-		break;
-	case NS::Build::Cli::Cl :
-		return "/DEBUG";
-		break;
-	default:
-		break;
-	}
-	return "";
-}
-std::string get_optimisation_flag(NS::Build::Cli cli) noexcept {
-	switch (cli) {
-	case NS::Build::Cli::Gcc :
-		return "-O3";
-		break;
-	case NS::Build::Cli::Cl :
-		return "/O3";
-		break;
-	default:
-		break;
-	}
-	return "";
-}
-std::string get_define_flag(NS::Build::Cli cli, std::string_view str) noexcept {
-	std::string ret = "";
-	switch (cli) {
-	case NS::Build::Cli::Gcc :
-		ret += "-D";
-		ret += str.data();
-		break;
-	case NS::Build::Cli::Cl :
-		ret += "/D";
-		ret += str.data();
-		break;
-	default:
-		break;
-	}
-	return ret;
-}
-std::string get_force_include_flag(NS::Build::Cli cli, std::string_view str) noexcept {
-	switch (cli) {
-	case NS::Build::Cli::Gcc :
-		return std::string("-include ") + str.data();
-	case NS::Build::Cli::Cl :
-		return std::string("/FI\"") + str.data() + "\"";
-	default:
-		return "";
-	}
-}
-std::string get_compile_flag(NS::Build::Cli cli) noexcept {
-	switch (cli) {
-	case NS::Build::Cli::Gcc :
-		return "-c";
-		break;
-	case NS::Build::Cli::Cl :
-		return "/c";
-		break;
-	default:
-		return "";
-		break;
-	}
-}
-std::string get_link_flag(NS::Build::Cli cli, std::string_view str) noexcept {
-	switch (cli) {
-	case NS::Build::Cli::Gcc :
-		return std::string("-l") + str.data();
-		break;
-	case NS::Build::Cli::Cl :
-		return "";
-		break;
-	default:
-		return "";
-		break;
-	}
-}
 
-std::string get_include_flag(NS::Build::Cli cli, std::string_view str) noexcept {
-	switch (cli) {
-	case NS::Build::Cli::Gcc :
-		return std::string("-I") + str.data();
-		break;
-	case NS::Build::Cli::Cl :
-		return std::string("/I ") + str.data();
-		break;
-	default:
-		return "";
-		break;
-	}
-}
-std::string get_object_output_flag(NS::Build::Cli cli, std::string_view str) noexcept {
-	switch (cli) {
-	case NS::Build::Cli::Gcc :
-		return std::string("-o ") + str.data();
-		break;
-	case NS::Build::Cli::Cl :
-		return std::string("/Fo") + "\"" + str.data() + "\"";
-		break;
-	default:
-		return "";
-		break;
-	}
-}
-std::string get_exe_output_flag(NS::Build::Cli cli, std::string_view str) noexcept {
-	switch (cli) {
-	case NS::Build::Cli::Gcc :
-		return std::string("-o ") + str.data();
-		break;
-	case NS::Build::Cli::Cl :
-		return std::string("/Fe") + "\"" + str.data() + "\"";
-		break;
-	default:
-		return "";
-		break;
-	}
-}
-std::string get_preprocessor_output_flag(NS::Build::Cli cli, std::string_view str) noexcept {
-	switch (cli) {
-	case NS::Build::Cli::Gcc :
-		return std::string("-o ") + str.data();
-		break;
-	case NS::Build::Cli::Cl :
-		return std::string("/Fi") + "\"" + str.data() + "\"";
-		break;
-	default:
-		return "";
-		break;
-	}
-}
+	switch (opts) {
+	case NS::Cli_Opts::Preprocess :
+		X("-E", "/P");
+	case NS::Cli_Opts::Optimisation :
+		X("-O3", "/O3");
+	case NS::Cli_Opts::Debug_Symbol_Link :
+		X("-g", "/DEBUG");
+	case NS::Cli_Opts::Debug_Symbol_Compile :
+		X("-g", "/Z7");
 
+	case NS::Cli_Opts::Compile :
+		X(std::string("-c"), std::string("/c"));
+	case NS::Cli_Opts::Link :
+		X(std::string("-l") + param.data(), std::string("???"));
+	case NS::Cli_Opts::Define :
+		X(std::string("-D") + param.data(), std::string("/D") + param.data());
+	case NS::Cli_Opts::Include :
+		X(std::string("-I") + param.data(), std::string("/I") + param.data());
+	case NS::Cli_Opts::Std_Version :
+		X(std::string("-std=") + param.data(), std::string("/std:") + param.data());
+	case NS::Cli_Opts::Lib_Path :
+		X(std::string("-L") + param.data(), std::string("/LIBPATH:") + param.data());
+	case NS::Cli_Opts::Object_Output :
+		X(std::string("-o ") + param.data(), std::string("/Fo\"") + param.data() + "\"");
+	case NS::Cli_Opts::Exe_Output :
+		X(std::string("-o ") + param.data(), std::string("/Fo\"") + param.data() + "\"");
+	case NS::Cli_Opts::Preprocessor_Output :
+		X(std::string("-o ") + param.data(), std::string("/Fi\"") + param.data() + "\"");
+	case NS::Cli_Opts::Force_Include :
+		X(std::string("-include ") + param.data(), std::string("/FI\"") + param.data() + "\"");
+	default:
+		break;
+	}
+
+	#undef X
+}
 
 void dump_to_file(std::string_view str, const std::filesystem::path& p) noexcept {
 	FILE* f = fopen(p.generic_string().c_str(), "w");

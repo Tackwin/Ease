@@ -112,12 +112,6 @@ struct Build {
 		Count
 	};
 
-	enum class Std_Ver {
-		Cpp17 = 0,
-		Cpp20 = 1,
-		Count
-	};
-
 	std::string name;
 
 	Flags flags;
@@ -125,7 +119,7 @@ struct Build {
 
 	Cli cli;
 	Target target;
-	Std_Ver std_ver;
+	std::string_view std_ver;
 
 	bool invert_header_implementation_define = false;
 
@@ -136,7 +130,10 @@ struct Build {
 
 	std::vector<std::filesystem::path> source_files;
 	std::vector<std::filesystem::path> header_files;
+
 	std::vector<std::filesystem::path> link_files;
+	std::vector<std::filesystem::path> lib_path;
+
 	std::vector<std::filesystem::path> static_files;
 
 	std::vector<std::filesystem::path> export_files;
@@ -153,18 +150,38 @@ struct Build {
 
 	static Build get_default(Flags flags = {}) noexcept;
 
+	void add_header(const std::filesystem::path& f) noexcept;
 	void add_source(const std::filesystem::path& f) noexcept;
 	void add_source_recursively(const std::filesystem::path& f) noexcept;
+
 	void add_library(const std::filesystem::path& f) noexcept;
-	void add_static(const std::filesystem::path& f) noexcept;
-	void add_header(const std::filesystem::path& f) noexcept;
-	void add_include(const std::filesystem::path& f) noexcept;
+	void add_library_path(const std::filesystem::path& f) noexcept;
+
 	void add_export(const std::filesystem::path& f) noexcept;
 	void add_export(const std::filesystem::path& from, const std::filesystem::path& to) noexcept;
+
 	void add_define(std::string str) noexcept;
 
 	void add_default_win32() noexcept;
 };
+
+enum class Cli_Opts {
+	Compile,
+	Exe_Output,
+	Object_Output,
+	Preprocessor_Output,
+	Force_Include,
+	Std_Version,
+	Include,
+	Link,
+	Lib_Path,
+	Define,
+	Optimisation,
+	Preprocess,
+	Debug_Symbol_Compile,
+	Debug_Symbol_Link
+};
+
 
 struct Env {
 	static constexpr bool Win32 =
@@ -176,7 +193,11 @@ struct Env {
 };
 
 namespace details {
+	std::string get_cli_flag(
+		Build::Cli cli, Cli_Opts opts, std::string_view param = ""
+	) noexcept;
 	void install_build(const Build& b) noexcept;
+	std::vector<std::filesystem::path> get_installed_dirs(const Build& b) noexcept;
 	std::filesystem::path get_output_path(const Build& b) noexcept;
 };
 

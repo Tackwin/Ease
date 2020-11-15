@@ -38,23 +38,44 @@ std::filesystem::path get_user_data_path() noexcept {
 
 struct Install_State {
 	std::unordered_set<std::filesystem::path, fs_hash> dirs;
+
+	static std::optional<Install_State> open(const std::filesystem::path& path) noexcept {
+		Install_State state;
+		std::ifstream in_file;
+		in_file.open(path);
+		if (in_file.good()) {
+			for (std::string line; std::getline(in_file, line);) if (!line.empty()) {
+				state.dirs.insert(line);
+			}
+		} else {
+			return std::nullopt;
+		}
+		in_file.close();
+		return state;
+	}
+
+	void save(const std::filesystem::path& path) noexcept {
+		std::ofstream out_file;
+		out_file.open(path);
+		for (auto& x : dirs) {
+			out_file << x.generic_string() << "\n";
+		}
+		out_file.close();
+	}
 };
+
+
 
 void NS::details::install_build(const NS::Build& b) noexcept {
 	std::filesystem::create_directories("install");
 
-	Install_State state;
-
-	std::ifstream in_file;
-	in_file.open(get_user_data_path() / ".ease/install.txt");
-	if (in_file.good()) {
-		for (std::string line; std::getline(in_file, line);) if (!line.empty()) {
-			state.dirs.insert(line);
-		}
-	} else {
+	auto opt_state = Install_State::open(get_user_data_path() / ".ease/install.txt");
+	if (!opt_state) {
 		std::filesystem::create_directories(get_user_data_path() / ".ease/");
+		opt_state = Install_State{};
 	}
-	in_file.close();
+	Install_State state = *opt_state;
+
 
 	state.dirs.insert(Working_Directory / "install");
 	for (auto& x : b.to_install) if (std::filesystem::is_regular_file(x)) {
@@ -100,11 +121,18 @@ void NS::details::install_build(const NS::Build& b) noexcept {
 		);
 	}
 
-	std::ofstream out_file;
-	out_file.open(get_user_data_path() / ".ease/install.txt");
-	for (auto& x : state.dirs) {
-		out_file << x.generic_string() << "\n";
-	}
-	out_file.close();
+	state.save(get_user_data_path() / ".ease/install.txt");
 }
+
+
+std::vector<std::filesystem::path> NS::details::get_installed_dirs(const Build& b) noexcept {
+	auto opt_state = Install_State::open(get_user_data_path() / ".ease/install.txt");
+	if (opt_state) {
+		return std::vector<std::filesystem::path>(
+			std::begin(opt_state->dirs), std::end(opt_state->dirs)
+		);
+	}
+	return {};
+}
+
 #undef NS
