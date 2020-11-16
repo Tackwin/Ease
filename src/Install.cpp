@@ -98,28 +98,26 @@ void NS::details::install_build(const NS::Build& b) noexcept {
 		);
 	}
 
-	for (size_t i = 0; i < b.export_files.size(); ++i)
-		if (std::filesystem::is_regular_file(b.export_files[i]))
-	{
+	for (size_t i = 0; i < b.export_files.size(); ++i) {
 		auto d = b.export_dest_files[i];
 		d = d.lexically_normal();
 		d = Working_Directory / "install" / d;
 		d = d.lexically_normal();
 		if (b.flags.verbose_level > 0) {
 			printf(
-				"Installing %s to %s.\n",
+				"Installing %s to %s\n",
 				b.export_files[i].generic_string().c_str(),
 				d.generic_string().c_str()
 			);
 		}
 
+		auto opts = std::filesystem::copy_options::overwrite_existing;
+		if (std::filesystem::is_directory(b.export_files[i]))
+			opts = std::filesystem::copy_options::recursive;
+
 		std::filesystem::create_directories(d.parent_path());
-		std::filesystem::copy_file(
-			b.export_files[i],
-			d,
-			std::filesystem::copy_options::overwrite_existing
-		);
-	}
+		std::filesystem::copy(b.export_files[i], d, opts);
+	} 
 
 	state.save(get_user_data_path() / ".ease/install.txt");
 }

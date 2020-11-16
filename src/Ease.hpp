@@ -75,6 +75,20 @@ struct Flags {
 	std::optional<std::filesystem::path> state_file;
 	std::optional<std::filesystem::path> output;
 
+	inline static std::filesystem::path Default_Build_Path = "ease_build/";
+	inline static std::filesystem::path Default_Temp_Path = "ease_temp/";
+	std::optional<std::filesystem::path> build_path;
+	std::optional<std::filesystem::path> temp_path;
+
+	std::filesystem::path get_build_path() const noexcept {
+		if (build_path) return *build_path;
+		return Default_Build_Path;
+	}
+	std::filesystem::path get_temp_path() const noexcept {
+		if (temp_path) return *temp_path;
+		return Default_Temp_Path;
+	}
+
 	static Flags parse(int argc, char** argv) noexcept;
 	static const char* help_message() noexcept;
 	static const char* help_install_message() noexcept;
@@ -99,11 +113,30 @@ struct Commands {
 	void add_command(std::string c, std::string desc, std::filesystem::path out) noexcept;
 };
 
+struct Build;
+struct Build_Ptr {
+	Build* b = nullptr;
+	Build_Ptr() noexcept {}
+	Build_Ptr(const Build& b_) noexcept;
+	~Build_Ptr() noexcept;
+	Build_Ptr(const Build_Ptr& other) noexcept;
+	Build_Ptr(Build_Ptr&& other) noexcept;
+	Build_Ptr& operator=(const Build_Ptr& other) noexcept;
+	Build_Ptr& operator=(Build_Ptr&& other) noexcept;
+};
+
 struct Build {
 	enum class Target {
 		Header_Only,
 		Static,
+		Shared,
+		None, // Use for export only for instance.
 		Exe
+	};
+
+	enum class Arch {
+		x86,
+		x64
 	};
 
 	enum class Cli {
@@ -118,6 +151,7 @@ struct Build {
 	std::filesystem::path state_file;
 
 	Cli cli;
+	Arch arch;
 	Target target;
 	std::string_view std_ver;
 
@@ -148,6 +182,8 @@ struct Build {
 
 	std::vector<std::filesystem::path> to_install;
 
+	Build_Ptr next;
+
 	static Build get_default(Flags flags = {}) noexcept;
 
 	void add_header(const std::filesystem::path& f) noexcept;
@@ -167,6 +203,7 @@ struct Build {
 
 enum class Cli_Opts {
 	Compile,
+	Link_Shared,
 	Exe_Output,
 	Object_Output,
 	Preprocessor_Output,
@@ -178,6 +215,7 @@ enum class Cli_Opts {
 	Define,
 	Optimisation,
 	Preprocess,
+	Arch,
 	Debug_Symbol_Compile,
 	Debug_Symbol_Link
 };
