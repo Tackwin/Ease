@@ -93,6 +93,15 @@ NS::Flags NS::Flags::parse(int argc, char** argv) noexcept {
 		if (strcmp(it, "--no-install-path") == 0) {
 			flags.no_install_path = true;
 		}
+		if (strcmp(it, "--no-compile-commands") == 0) {
+			flags.no_compile_commands = true;
+		}
+		if (strcmp(it, "--compile-commands") == 0) {
+			if (i + 1 >= argc) continue;
+			i++;
+			flags.compile_command_path = argv[i];
+			flags.compile_command_path = flags.compile_command_path->lexically_normal();
+		}
 		if (strcmp(it, "--state-file") == 0) {
 			if (i + 1 >= argc) continue;
 			i++;
@@ -185,6 +194,15 @@ const char* NS::Flags::help_message() noexcept {
 	
 	"--scratch                    Disable incremental compilation and will clean the state file\n"
 	"                    Exemple: ./Build.exe --scratch\n\n"
+	
+	"--no-compile-commands        Will not generate a compile_commands.json file.\n"
+	"                    Exemple: ./Build.exe --no-compile-commands\n\n"
+	
+	"--compile-commands <path>    Set the path to generate compile_commands.json file. If <path> is\n"
+	"                             a directory the file will be named compile_commands.json else it\n"
+	"                             will take the name of the file specified by <path>"
+	"                    Exemple: ./Build.exe --compile-commands build_dir/ |\n"
+	"                    Exemple: ./Build.exe --compile-commands build_dir/my_file.json \n\n"
 	
 	"--state-file <path>          Will use <path> as the path to save the state file. If <path>\n"
 	"                             represent a file then the state file will take exactly it's name\n"
@@ -393,24 +411,79 @@ NS::State construct_new_state(const std::filesystem::path& p) noexcept {
 // ===================== State
 // ===================== Commands
 
-void NS::Commands::add_command(std::string c) noexcept {
-	add_command(c, std::move(c));
-}
 
-void NS::Commands::add_command(std::string c, std::string desc) noexcept {
-	commands.emplace_back(std::move(c));
-	short_desc.emplace_back(std::move(desc));
+void NS::Commands::add_command(
+	std::string command,
+	std::string desc,
+	std::filesystem::path file,
+	std::filesystem::path out,
+	std::filesystem::path dir
+) noexcept {
+	Entry e;
+	e.command = std::move(command);
+	e.short_desc = std::move(desc);
+	e.file = std::move(file);
+	e.output = std::move(out);
+	e.directory = std::move(dir);
+	entries.push_back(e);
 }
 
 void NS::Commands::add_command(
-	std::string c, std::string desc, std::filesystem::path out
+	std::string command,
+	std::string desc,
+	std::filesystem::path file,
+	std::filesystem::path out
 ) noexcept {
-	commands.emplace_back(std::move(c));
-	short_desc.emplace_back(std::move(desc));
-	file_output.emplace_back(std::move(out));
+	add_command(
+		std::move(command),
+		std::move(desc),
+		std::move(file),
+		std::move(out),
+		std::filesystem::current_path()
+	);
+}
+
+void NS::Commands::save_command_json(const std::filesystem::path& p) noexcept {
+	std::string json;
+	json = "[";
+
+	auto escape = [] (const std::string& str) noexcept {
+		static std::string n;
+		n.clear();
+		for (auto& c : str) {
+			if (c == '"') n += "\\";
+			n += c;
+		}
+
+		return n;
+	};
+
+	char separator = ' ';
+	for (auto& x : entries) {
+		auto dir = std::filesystem::absolute(x.directory);
+		auto com = x.command;
+		auto fil = std::filesystem::relative(x.file, dir);
+		auto out = std::filesystem::relative(x.output ? *x.output : "", dir);
+
+		json += separator;
+
+		json += "{\n";
+		json += "\t\"directory\": \"" + escape(dir.generic_string()) + "\",\n";
+		json += "\t\"command\":   \"" + escape(com) + "\",\n";
+		json += "\t\"output\":    \"" + escape(out.generic_string()) + "\",\n";
+		json += "\t\"file\":      \"" + escape(fil.generic_string()) + "\"\n";
+		json += "}";
+
+		separator = ',';
+	}
+
+	json += "]";
+
+	dump_to_file(json, p);
 }
 
 // ===================== Commands
+
 
 
 void concat(
@@ -445,7 +518,7 @@ std::string produce_single_header(NS::Build& b) noexcept {
 	return single;
 }
 
-NS::Commands compile_command_object(NS::State& state, const NS::Build& b) noexcept {
+NS::Commands compile_command_object(const NS::State& state, const NS::Build& b) noexcept {
 	using namespace NS;
 	using namespace details;
 	NS::Commands commands;
@@ -474,6 +547,8 @@ NS::Commands compile_command_object(NS::State& state, const NS::Build& b) noexce
 
 		if (b.flags.release)
 			command += " " + get_cli_flag(b.cli, Cli_Opts::Optimisation);
+		else
+			command += " " + get_cli_flag(b.cli, Cli_Opts::No_Optimisation);
 
 		command += " " + get_cli_flag(b.cli, Cli_Opts::Object_Output, o.generic_string());
 
@@ -490,8 +565,8 @@ NS::Commands compile_command_object(NS::State& state, const NS::Build& b) noexce
 				" " + get_cli_flag(b.cli, Cli_Opts::Debug_Symbol_Compile, x.generic_string());
 
 		command += " " + c.generic_string();
-
-		commands.add_command(command, "Compile " + x.filename().generic_string());
+		
+		commands.add_command(command, "Compile " + x.filename().generic_string(), x, o);
 	}
 	return commands;
 }
@@ -526,7 +601,7 @@ NS::Commands compile_command_link_exe(const NS::Build& b) noexcept {
 	auto exe_path = NS::details::get_output_path(b).replace_extension("exe");
 
 	command += get_cli_flag(b.cli, Cli_Opts::Exe_Output, exe_path.generic_string()) + " ";
-	commands.add_command(command, "Link " + b.name, exe_path);
+	commands.add_command(command, "Link " + b.name, "", exe_path);
 	return commands;
 }
 
@@ -546,7 +621,7 @@ NS::Commands compile_command_link_static(const NS::Build& b) noexcept {
 		command += o.generic_string() + " ";
 	}
 
-	commands.add_command(command, "Archive " + b.name, static_path);
+	commands.add_command(command, "Archive " + b.name, "", static_path);
 	return commands;
 }
 
@@ -580,7 +655,7 @@ NS::Commands compile_command_incremetal_check(const NS::Build& b) noexcept {
 
 		command += " " + f.generic_string();
 
-		commands.add_command(command, "Preprocess " + x.filename().generic_string());
+		commands.add_command(command, "Preprocess " + x.filename().generic_string(), x, p);
 	}
 
 	return commands;
@@ -592,19 +667,19 @@ void execute(const NS::Build& build, const NS::Commands& c) noexcept {
 
 	for (size_t i = 0; i < build.flags.j; ++i) {
 		threads.push_back(std::thread([&, i] {
-			for (size_t j = i; j < c.commands.size(); j += build.flags.j) {
+			for (size_t j = i; j < c.entries.size(); j += build.flags.j) {
 				if (stop_flag) return;
 
 				printf(
 					"[%*d/%*d] %s\n",
-					(int)(1 + std::log10((double)c.commands.size())),
+					(int)(1 + std::log10((double)c.entries.size())),
 					(int)(1 + j),
-					(int)(1 + std::log10((double)c.commands.size())),
-					(int)c.commands.size(),
-					c.short_desc[j].c_str()
+					(int)(1 + std::log10((double)c.entries.size())),
+					(int)c.entries.size(),
+					c.entries[j].short_desc.c_str()
 				);
-				if (build.flags.verbose_level > 0) printf("%s\n", c.commands[j].c_str());
-				auto ret = system(c.commands[j].c_str());
+				if (build.flags.verbose_level > 0) printf("%s\n", c.entries[j].command.c_str());
+				auto ret = system(c.entries[j].command.c_str());
 			
 				if (ret != 0) stop_flag = true;
 			}
@@ -665,6 +740,14 @@ void handle_build(Build& b) noexcept {
 		for (auto& x : b.pre_compile) execute(b, x);
 
 		::NS::Commands c;
+
+		if (!b.flags.no_compile_commands) {
+			c = compile_command_object({}, b);
+			auto p = b.flags.get_compile_commands_path();
+			if (std::filesystem::is_directory(p)) p /= "compile_commands.json";
+			c.save_command_json(p);
+		}
+
 		if (!b.flags.link_only) {
 			c = compile_command_incremetal_check(b);
 			execute(b, c);
@@ -683,8 +766,8 @@ void handle_build(Build& b) noexcept {
 			c = compile_command_link_static(b);
 		}
 		// in the link phase we add the executable(s) to the install path.
-		for (auto& x : c.file_output) {
-			b.to_install.push_back(x);
+		for (auto& x : c.entries) if (x.output) {
+			b.to_install.push_back(*x.output);
 		}
 
 		for (auto& x : b.pre_link) execute(b, x);
@@ -694,7 +777,7 @@ void handle_build(Build& b) noexcept {
 		new_state.save_to_file(b.state_file);
 
 		if (b.target == NS::Build::Target::Exe && b.flags.run_after_compilation) {
-			std::string run = b.name + ".exe";
+			std::string run = NS::details::get_output_path(b).generic_string();
 			system(run.c_str());
 		}
 
@@ -761,10 +844,12 @@ std::string NS::details::get_cli_flag(
 		X("-E", "/P");
 	case NS::Cli_Opts::Optimisation :
 		X("-O3", "/O3");
+	case NS::Cli_Opts::No_Optimisation :
+		X("-O0", "/O0");
 	case NS::Cli_Opts::Debug_Symbol_Link :
-		X("-g", "/DEBUG");
+		X("-g -gcodeview -gno-column-info", "/DEBUG");
 	case NS::Cli_Opts::Debug_Symbol_Compile :
-		X("-g", "/Z7");
+		X("-g -gcodeview -gno-column-info", "/Z7");
 
 	case NS::Cli_Opts::Arch :
 		X(std::string("-m32"), "");

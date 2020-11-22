@@ -42,11 +42,12 @@ exit
 
 #define _CRT_SECURE_NO_WARNINGS
 #include <map>
+#include <cmath>
+#include <atomic>
 #include <vector>
 #include <string>
 #include <optional>
 #include <filesystem>
-
 
 #ifndef EASE_NAMESPCE
 #define EASE_NAMESPACE Ease
@@ -67,6 +68,7 @@ struct Flags {
 	bool generate_debug = false;
 	bool no_install_path = false;
 	bool show_help_install = false;
+	bool no_compile_commands = false;
 	bool run_after_compilation = false;
 
 	size_t j = 0;
@@ -77,9 +79,16 @@ struct Flags {
 
 	inline static std::filesystem::path Default_Build_Path = "ease_build/";
 	inline static std::filesystem::path Default_Temp_Path = "ease_temp/";
+	inline static std::filesystem::path Default_Compile_Command_Path = "compile_commands.json";
+
 	std::optional<std::filesystem::path> build_path;
 	std::optional<std::filesystem::path> temp_path;
+	std::optional<std::filesystem::path> compile_command_path;
 
+	std::filesystem::path get_compile_commands_path() const noexcept {
+		if (compile_command_path) return *compile_command_path;
+		else return get_build_path() / Default_Compile_Command_Path;
+	}
 	std::filesystem::path get_build_path() const noexcept {
 		if (build_path) return *build_path;
 		return Default_Build_Path;
@@ -103,14 +112,33 @@ struct State {
 };
 
 struct Commands {
-	std::vector<std::string> commands;
-	std::vector<std::string> short_desc;
+	struct Entry {
+		std::string command;
+		std::string short_desc;
+		std::filesystem::path file;
+		std::filesystem::path directory;
 
-	std::vector<std::filesystem::path> file_output;
+		std::optional<std::filesystem::path> output;
+	};
 
-	void add_command(std::string c) noexcept;
-	void add_command(std::string c, std::string desc) noexcept;
-	void add_command(std::string c, std::string desc, std::filesystem::path out) noexcept;
+	std::vector<Entry> entries;
+
+	void add_command(
+		std::string command,
+		std::string desc,
+		std::filesystem::path file,
+		std::filesystem::path out
+	) noexcept;
+
+	void add_command(
+		std::string command,
+		std::string desc,
+		std::filesystem::path file,
+		std::filesystem::path out,
+		std::filesystem::path dir
+	) noexcept;
+
+	void save_command_json(const std::filesystem::path& p) noexcept;
 };
 
 struct Build;
@@ -214,6 +242,7 @@ enum class Cli_Opts {
 	Lib_Path,
 	Define,
 	Optimisation,
+	No_Optimisation,
 	Preprocess,
 	Arch,
 	Debug_Symbol_Compile,
