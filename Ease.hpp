@@ -1055,7 +1055,8 @@ void handle_build(Build& b) noexcept {
 		new_state.save_to_file(b.state_file);
 
 		if (b.target == NS::Build::Target::Exe && b.flags.run_after_compilation) {
-			std::string run = NS::details::get_output_path(b).generic_string();
+			std::string run =
+				NS::details::get_output_path(b).replace_extension("exe").generic_string();
 			system(run.c_str());
 		}
 
