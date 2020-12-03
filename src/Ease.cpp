@@ -42,7 +42,6 @@ std::string ltrim_copy(std::string s) {
 	return s;
 }
 
-std::filesystem::path Default_State_File = "state.txt";
 
 std::uint64_t hash(const std::string& str) noexcept;
 std::string unique_name(const std::filesystem::path& path) noexcept;
@@ -228,6 +227,50 @@ const char* NS::Flags::help_install_message() noexcept {
 	;
 }
 
+
+
+
+namespace std {
+	template<>
+	struct hash<std::filesystem::path> {
+		std::size_t operator()(const std::filesystem::path& p) const {
+			return std::filesystem::hash_value(p);
+		}
+	};
+};
+
+
+size_t NS::Flags::hash() const noexcept {
+	auto combine = [](auto seed, auto v) {
+		std::hash<std::remove_cv_t<decltype(v)>> hasher;
+		seed ^= hasher(v) + 0x9e3779b9 + (seed<<6) + (seed>>2);
+		return seed;
+	};
+
+	size_t h = 0;
+	h = combine(h, clean);
+	h = combine(h, release);
+	h = combine(h, scratch);
+	h = combine(h, install);
+	h = combine(h, show_help);
+	h = combine(h, link_only);
+	h = combine(h, generate_debug);
+	h = combine(h, no_install_path);
+	h = combine(h, show_help_install);
+	h = combine(h, no_compile_commands);
+	h = combine(h, run_after_compilation);
+	h = combine(h, j);
+	h = combine(h, verbose_level);
+	h = combine(h, state_file);
+	h = combine(h, output);
+	h = combine(h, build_path);
+	h = combine(h, temp_path);
+	h = combine(h, compile_command_path);
+
+	return h;
+}
+
+
 // ===================== FLAGS
 
 // ===================== BUILD_PTR
@@ -362,6 +405,8 @@ NS::State NS::State::load_from_file(const std::filesystem::path& p) noexcept {
 	std::istringstream stream(text);
 	std::string line;
 
+	if (std::getline(stream, line)) std::sscanf(line.c_str(), "%zu", &state.flags_hash);
+
 	while(std::getline(stream, line)) {
 		trim(line);
 		std::filesystem::path f = line;
@@ -385,6 +430,7 @@ NS::State NS::State::get_unchanged(const State& a, const State& b) noexcept {
 
 void NS::State::save_to_file(const std::filesystem::path& p) noexcept {
 	std::string to_dump = "";
+	to_dump += std::to_string(flags_hash) + "\n";
 	for (auto& [a, b] : files) {
 		to_dump += a.generic_string() + "\n";
 		to_dump += std::to_string(b) + "\n";
@@ -392,8 +438,8 @@ void NS::State::save_to_file(const std::filesystem::path& p) noexcept {
 
 	dump_to_file(to_dump, p);
 }
-NS::State construct_new_state(const std::filesystem::path& p) noexcept {
-	NS::State s;
+NS::State set_files_hashes(const std::filesystem::path& p, NS::State& s) noexcept {
+	s.files.clear();
 	for (auto& x : std::filesystem::recursive_directory_iterator(p)) {
 		if (!x.is_regular_file()) continue;
 		if (x.path().extension() != ".pre") continue;
@@ -709,12 +755,14 @@ void handle_build(Build& b) noexcept {
 	NS::State old_state = {};
 	NS::State new_state = {};
 
-	if (!b.flags.state_file) {
-		b.state_file = b.flags.get_build_path() / Default_State_File;
-	}
+	new_state.flags_hash = b.flags.hash();
+	if (!b.flags.scratch && std::filesystem::is_regular_file(b.flags.get_state_path()))
+		old_state = NS::State::load_from_file(b.flags.get_state_path());
 
-	if (!b.flags.scratch && std::filesystem::is_regular_file(b.state_file))
-		old_state = NS::State::load_from_file(b.state_file);
+	if (new_state.flags_hash != old_state.flags_hash) {
+		old_state = {};
+		b.flags.scratch = true;
+	}
 
 	std::string to_dump;
 	switch (b.target) {
@@ -751,7 +799,7 @@ void handle_build(Build& b) noexcept {
 		if (!b.flags.link_only) {
 			c = compile_command_incremetal_check(b);
 			execute(b, c);
-			new_state = construct_new_state(b.flags.get_temp_path());
+			set_files_hashes(b.flags.get_temp_path(), new_state);
 			if (!b.flags.scratch) old_state = NS::State::get_unchanged(old_state, new_state);
 
 			for (auto& x : b.pre_compile) execute(b, x);
@@ -774,7 +822,7 @@ void handle_build(Build& b) noexcept {
 		execute(b, c);
 		for (auto& x : b.post_link) execute(b, x);
 
-		new_state.save_to_file(b.state_file);
+		new_state.save_to_file(b.flags.get_state_path());
 
 		if (b.target == NS::Build::Target::Exe && b.flags.run_after_compilation) {
 			std::string run =

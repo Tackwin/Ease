@@ -59,6 +59,8 @@ static std::filesystem::path Working_Directory;
 
 struct Flags {
 
+	// I want to make optional bool because user code might want to knwo if a user set someting in
+	// the cmd.
 	bool clean = false;
 	bool release = false;
 	bool scratch = false;
@@ -74,13 +76,13 @@ struct Flags {
 	size_t j = 0;
 	size_t verbose_level = 0;
 
-	std::optional<std::filesystem::path> state_file;
-	std::optional<std::filesystem::path> output;
-
+	inline static std::filesystem::path Default_State_Path = "state.txt";
 	inline static std::filesystem::path Default_Build_Path = "ease_build/";
 	inline static std::filesystem::path Default_Temp_Path = "ease_temp/";
 	inline static std::filesystem::path Default_Compile_Command_Path = "compile_commands.json";
 
+	std::optional<std::filesystem::path> state_file;
+	std::optional<std::filesystem::path> output;
 	std::optional<std::filesystem::path> build_path;
 	std::optional<std::filesystem::path> temp_path;
 	std::optional<std::filesystem::path> compile_command_path;
@@ -98,12 +100,20 @@ struct Flags {
 		return Default_Temp_Path;
 	}
 
+	std::filesystem::path get_state_path() const noexcept {
+		if (state_file) return *state_file;
+		else return get_build_path() / Default_State_Path;
+	}
+
 	static Flags parse(int argc, char** argv) noexcept;
 	static const char* help_message() noexcept;
 	static const char* help_install_message() noexcept;
+
+	size_t hash() const noexcept;
 };
 
 struct State {
+	size_t flags_hash = 0;
 	std::map<std::filesystem::path, std::uint64_t> files;
 
 	static State load_from_file(const std::filesystem::path& p) noexcept;
@@ -176,7 +186,6 @@ struct Build {
 	std::string name;
 
 	Flags flags;
-	std::filesystem::path state_file;
 
 	Cli cli;
 	Arch arch;
