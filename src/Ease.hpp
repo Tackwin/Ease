@@ -61,12 +61,15 @@ struct Flags {
 
 	// I want to make optional bool because user code might want to knwo if a user set someting in
 	// the cmd.
+	// For now i'm keeping it as everything is false by default, since you can only set a flag to
+	// true it should be enough ?
 	bool clean = false;
 	bool release = false;
 	bool scratch = false;
 	bool install = false;
 	bool show_help = false;
 	bool link_only = false;
+	bool no_inline = false;
 	bool generate_debug = false;
 	bool no_install_path = false;
 	bool show_help_install = false;
@@ -75,6 +78,8 @@ struct Flags {
 
 	size_t j = 0;
 	size_t verbose_level = 0;
+
+	std::optional<size_t> release_level = std::nullopt;
 
 	inline static std::filesystem::path Default_State_Path = "state.txt";
 	inline static std::filesystem::path Default_Build_Path = "ease_build/";
@@ -255,7 +260,8 @@ enum class Cli_Opts {
 	Preprocess,
 	Arch,
 	Debug_Symbol_Compile,
-	Debug_Symbol_Link
+	Debug_Symbol_Link,
+	No_Inline
 };
 
 

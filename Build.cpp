@@ -2,7 +2,9 @@
 #include "src/Ease.cpp"
 #include "src/Install.cpp"
 
-// clang++ -o ./Build.exe .\Build.cpp  -std=c++17 -lShell32 -lOle32
+/*
+clang++ -o ./Build.exe .\Build.cpp  -std=c++17
+*/
 
 Build build(Flags flags) noexcept {
 	Build build = Build::get_default(flags);

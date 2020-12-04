@@ -85,9 +85,18 @@ NS::Flags NS::Flags::parse(int argc, char** argv) noexcept {
 		}
 		if (strcmp(it, "--release") == 0) {
 			flags.release = true;
+			if (i + 1 < argc) {
+				if (std::isdigit(argv[i + 1][0])) {
+					i++;
+					flags.release_level = std::stoull(argv[i]);
+				}
+			}
 		}
 		if (strcmp(it, "--scratch") == 0) {
 			flags.scratch = true;
+		}
+		if (strcmp(it, "--no-inline") == 0) {
+			flags.no_inline = true;
 		}
 		if (strcmp(it, "--no-install-path") == 0) {
 			flags.no_install_path = true;
@@ -166,9 +175,11 @@ const char* NS::Flags::help_message() noexcept {
 	"                             Level 2 will show additional informations.\n"
 	"                    Exemple: ./Build.exe --verbose 0 | ./Build.exe --verbose 1\n\n"
 
-	"--release                    Will compile the program using default option for release\n"
+	"--release [level]            Will compile the program using default option for release\n"
 	"                             (for instance, if the cli choosen is gcc, will compile using -O3)\n"
-	"                    Exemple: ./Build.exe --release\n\n"
+	"                             if level is specified it will use the appropriate level of\n"
+	"                             optimisation."
+	"                    Exemple: ./Build.exe --release | ./Build.exe --release 1\n\n"
 
 	"--install                    Will install the program to be referenced by the EASE_PATH\n"
 	"                             Environment variable, for more information you can run me with\n"
@@ -191,6 +202,10 @@ const char* NS::Flags::help_message() noexcept {
 	"                             It is not mutually exclusive with --release"
 	"                    Exemple: ./Build.exe --debug\n\n"
 	
+	"--no-inline                  Will set the compiler flag to not inline any function, if\n"
+	"                             availabe.\n"
+	"                    Exemple: ./Build.exe --no-inline\n\n"
+	
 	"--scratch                    Disable incremental compilation and will clean the state file\n"
 	"                    Exemple: ./Build.exe --scratch\n\n"
 	
@@ -206,7 +221,8 @@ const char* NS::Flags::help_message() noexcept {
 	"--state-file <path>          Will use <path> as the path to save the state file. If <path>\n"
 	"                             represent a file then the state file will take exactly it's name\n"
 	"                             but if it represents a directory the state file will be named\n"
-	"                             state.txt\n"
+	"                             state.txt .  By defualt the state file is located in the\n"
+	"                             build directory and is named state.txt\n"
 	"                    Exemple: ./Build.exe --state-file ./my_dir/other_file.ext |\n"
 	"                    Exemple: ./Build.exe --state-file ./my_dir/ \n\n"
 	
@@ -252,6 +268,7 @@ size_t NS::Flags::hash() const noexcept {
 	h = combine(h, release);
 	h = combine(h, scratch);
 	h = combine(h, install);
+	h = combine(h, no_inline);
 	h = combine(h, show_help);
 	h = combine(h, link_only);
 	h = combine(h, generate_debug);
@@ -266,6 +283,7 @@ size_t NS::Flags::hash() const noexcept {
 	h = combine(h, build_path);
 	h = combine(h, temp_path);
 	h = combine(h, compile_command_path);
+	h = combine(h, release_level);
 
 	return h;
 }
@@ -591,10 +609,15 @@ NS::Commands compile_command_object(const NS::State& state, const NS::Build& b) 
 		command += " " + get_cli_flag(b.cli, Cli_Opts::Compile);
 		command += " " + get_cli_flag(b.cli, Cli_Opts::Std_Version, b.std_ver);
 
-		if (b.flags.release)
-			command += " " + get_cli_flag(b.cli, Cli_Opts::Optimisation);
+		if (b.flags.release){
+			std::string param = "3";
+			if (b.flags.release_level) param = std::to_string(*b.flags.release_level);
+			command += " " + get_cli_flag(b.cli, Cli_Opts::Optimisation, param);
+		}
 		else
 			command += " " + get_cli_flag(b.cli, Cli_Opts::No_Optimisation);
+
+		if (b.flags.no_inline) command += " " + get_cli_flag(b.cli, Cli_Opts::No_Inline);
 
 		command += " " + get_cli_flag(b.cli, Cli_Opts::Object_Output, o.generic_string());
 
@@ -891,10 +914,10 @@ std::string NS::details::get_cli_flag(
 	switch (opts) {
 	case NS::Cli_Opts::Preprocess :
 		X("-E", "/P");
-	case NS::Cli_Opts::Optimisation :
-		X("-O3", "/O3");
 	case NS::Cli_Opts::No_Optimisation :
 		X("-O0", "/O0");
+	case NS::Cli_Opts::No_Inline :
+		X("-fno-inline", "/Ob0");
 	case NS::Cli_Opts::Debug_Symbol_Link :
 		X("-g -gcodeview -gno-column-info", "/DEBUG");
 	case NS::Cli_Opts::Debug_Symbol_Compile :
@@ -908,6 +931,8 @@ std::string NS::details::get_cli_flag(
 		X(std::string("-shared"), std::string("/DLL"));
 	case NS::Cli_Opts::Link :
 		X(std::string("-l") + param.data(), std::string("???"));
+	case NS::Cli_Opts::Optimisation :
+		X(std::string("-O") + param.data(), std::string("/O") + param.data());
 	case NS::Cli_Opts::Define :
 		X(std::string("-D") + param.data(), std::string("/D") + param.data());
 	case NS::Cli_Opts::Include :
