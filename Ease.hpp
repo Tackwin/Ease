@@ -64,9 +64,11 @@ struct Flags {
 	// For now i'm keeping it as everything is false by default, since you can only set a flag to
 	// true it should be enough ?
 	bool clean = false;
+	bool openmp = false;
 	bool release = false;
 	bool scratch = false;
 	bool install = false;
+	bool assembly = false;
 	bool show_help = false;
 	bool link_only = false;
 	bool no_inline = false;
@@ -84,6 +86,7 @@ struct Flags {
 	inline static std::filesystem::path Default_State_Path = "state.txt";
 	inline static std::filesystem::path Default_Build_Path = "ease_build/";
 	inline static std::filesystem::path Default_Temp_Path = "ease_temp/";
+
 	inline static std::filesystem::path Default_Compile_Command_Path = "compile_commands.json";
 
 	std::optional<std::filesystem::path> state_file;
@@ -171,6 +174,7 @@ struct Build_Ptr {
 struct Build {
 	enum class Target {
 		Header_Only,
+		Assembly,
 		Static,
 		Shared,
 		None, // Use for export only for instance.
@@ -259,8 +263,10 @@ enum class Cli_Opts {
 	No_Optimisation,
 	Preprocess,
 	Arch,
+	Assembly_Output,
 	Debug_Symbol_Compile,
 	Debug_Symbol_Link,
+	OpenMP,
 	No_Inline
 };
 
@@ -391,8 +397,14 @@ NS::Flags NS::Flags::parse(int argc, char** argv) noexcept {
 		if (strcmp(it, "--no-inline") == 0) {
 			flags.no_inline = true;
 		}
+		if (strcmp(it, "--assembly") == 0) {
+			flags.assembly = true;
+		}
 		if (strcmp(it, "--no-install-path") == 0) {
 			flags.no_install_path = true;
+		}
+		if (strcmp(it, "--openmp") == 0) {
+			flags.openmp = true;
 		}
 		if (strcmp(it, "--no-compile-commands") == 0) {
 			flags.no_compile_commands = true;
@@ -457,6 +469,12 @@ const char* NS::Flags::help_message() noexcept {
 	
 	"-j <n>                        Will use n threads.\n"
 	"                    Exemple: ./Build.exe -j 4\n\n"
+
+	"--openmp                     Will compile with openmp if available.\n"
+	"                    Exemple: ./Build.exe --openmp\n\n"
+
+	"--assembly                   Will compile to output assembly file.\n"
+	"                    Exemple: ./Build.exe --assembly\n\n"
 
 	"-l|--link                    Will only link the program, then exit. There must be a complete\n"
 	"                             state available. Will not check for incremental compilation.\n"
@@ -558,9 +576,11 @@ size_t NS::Flags::hash() const noexcept {
 
 	size_t h = 0;
 	h = combine(h, clean);
+	h = combine(h, openmp);
 	h = combine(h, release);
 	h = combine(h, scratch);
 	h = combine(h, install);
+	h = combine(h, assembly);
 	h = combine(h, no_inline);
 	h = combine(h, show_help);
 	h = combine(h, link_only);
@@ -695,6 +715,7 @@ std::filesystem::path NS::details::get_output_path(const Build& b) noexcept {
 			out /= b.name;
 		}
 	}
+	if constexpr (Env::Win32) out = out.replace_extension(".exe");
 
 	return out;
 }
@@ -902,6 +923,7 @@ NS::Commands compile_command_object(const NS::State& state, const NS::Build& b) 
 		command += " " + get_cli_flag(b.cli, Cli_Opts::Compile);
 		command += " " + get_cli_flag(b.cli, Cli_Opts::Std_Version, b.std_ver);
 
+		if (b.flags.openmp) command += " " + get_cli_flag(b.cli, Cli_Opts::OpenMP);
 		if (b.flags.release){
 			std::string param = "3";
 			if (b.flags.release_level) param = std::to_string(*b.flags.release_level);
@@ -933,6 +955,71 @@ NS::Commands compile_command_object(const NS::State& state, const NS::Build& b) 
 	return commands;
 }
 
+
+NS::Commands compile_assembly(const NS::State& state, const NS::Build& b) noexcept {
+	using namespace NS;
+	using namespace details;
+	NS::Commands commands;
+	std::string command;
+
+	// Compile to -o
+	for (auto x : b.source_files) {
+
+		auto c = x;
+
+		std::filesystem::path o = NS::details::get_output_path(b).parent_path();
+
+		// >SEE(Tackwin):
+		// Here we ideally want to preverse the tree structure of the sources.
+		// But i don't want to just spam std::filesystem::cretate_directories here.
+		// so i don't know what i should do...
+		o += unique_name(x) + ".s";
+		o = o.lexically_normal();
+
+		if (b.flags.link_only) continue;
+
+		auto test_file = unique_name(x);
+
+		// Check if this files has not changed
+		// (so it must first exists)
+		if (std::filesystem::is_regular_file(o) && state.files.count(test_file) > 0) continue;
+
+		command = b.compiler.generic_string();
+		command += " " + get_cli_flag(b.cli, Cli_Opts::Compile);
+		command += " " + get_cli_flag(b.cli, Cli_Opts::Std_Version, b.std_ver);
+		command += " " + get_cli_flag(b.cli, Cli_Opts::Assembly_Output, o.generic_string());
+
+		if (b.flags.openmp) command += " " + get_cli_flag(b.cli, Cli_Opts::OpenMP);
+		if (b.flags.release){
+			std::string param = "3";
+			if (b.flags.release_level) param = std::to_string(*b.flags.release_level);
+			command += " " + get_cli_flag(b.cli, Cli_Opts::Optimisation, param);
+		}
+		else
+			command += " " + get_cli_flag(b.cli, Cli_Opts::No_Optimisation);
+
+		if (b.flags.no_inline) command += " " + get_cli_flag(b.cli, Cli_Opts::No_Inline);
+
+
+		for (auto& d : b.defines) command += " " + get_cli_flag(b.cli, Cli_Opts::Define, d);
+
+		for (auto& x : b.header_files) if (std::filesystem::is_directory(x))
+			command += " " + get_cli_flag(b.cli, Cli_Opts::Include, x.generic_string());
+
+		for (auto& x : b.header_files) if (std::filesystem::is_regular_file(x))
+			command += " " + get_cli_flag(b.cli, Cli_Opts::Force_Include, x.generic_string());
+
+		if (b.flags.generate_debug)
+			command +=
+				" " + get_cli_flag(b.cli, Cli_Opts::Debug_Symbol_Compile, x.generic_string());
+
+		command += " " + c.generic_string();
+		
+		commands.add_command(command, "Assemble " + x.filename().generic_string(), x, o);
+	}
+	return commands;
+}
+
 NS::Commands compile_command_link_exe(const NS::Build& b) noexcept {
 	using namespace NS;
 	using namespace details;
@@ -956,11 +1043,11 @@ NS::Commands compile_command_link_exe(const NS::Build& b) noexcept {
 	for (auto& x : b.lib_path)
 		command += get_cli_flag(b.cli, Cli_Opts::Lib_Path, x.generic_string()) + " ";
 
-
+	if (b.flags.openmp) command += get_cli_flag(b.cli, Cli_Opts::OpenMP) + " ";
 	if (b.flags.generate_debug)
 		command += get_cli_flag(b.cli, Cli_Opts::Debug_Symbol_Link) + " ";
 
-	auto exe_path = NS::details::get_output_path(b).replace_extension("exe");
+	auto exe_path = NS::details::get_output_path(b);
 
 	command += get_cli_flag(b.cli, Cli_Opts::Exe_Output, exe_path.generic_string()) + " ";
 	commands.add_command(command, "Link " + b.name, "", exe_path);
@@ -1006,6 +1093,7 @@ NS::Commands compile_command_incremetal_check(const NS::Build& b) noexcept {
 		command += " " + get_cli_flag(b.cli, Cli_Opts::Std_Version, b.std_ver);
 		command += " " + get_cli_flag(b.cli, Cli_Opts::Preprocessor_Output, p.generic_string());
 
+		if (b.flags.openmp) command += " " + get_cli_flag(b.cli, Cli_Opts::OpenMP);
 		for (auto& d : b.defines)
 			command += " " + get_cli_flag(b.cli, Cli_Opts::Define, d);
 
@@ -1024,6 +1112,7 @@ NS::Commands compile_command_incremetal_check(const NS::Build& b) noexcept {
 }
 
 void execute(const NS::Build& build, const NS::Commands& c) noexcept {
+	#ifndef NO_THREAD
 	std::vector<std::thread> threads;
 	std::atomic<bool> stop_flag = false;
 
@@ -1052,6 +1141,29 @@ void execute(const NS::Build& build, const NS::Commands& c) noexcept {
 	if (stop_flag) {
 		printf("There was an error in the build. There should be more informations above.");
 	}
+#else
+	bool stop_flag = false;
+	for (size_t i = 0; i < c.entries.size(); i++) {
+		if (stop_flag) return;
+
+		printf(
+			"[%*d/%*d] %s\n",
+			(int)(1 + std::log10((double)c.entries.size())),
+			(int)(1 + i),
+			(int)(1 + std::log10((double)c.entries.size())),
+			(int)c.entries.size(),
+			c.entries[i].short_desc.c_str()
+		);
+		if (build.flags.verbose_level > 0) printf("%s\n", c.entries[i].command.c_str());
+		auto ret = system(c.entries[i].command.c_str());
+	
+		if (ret != 0) stop_flag = true;
+	}
+	
+	if (stop_flag) {
+		printf("There was an error in the build. There should be more informations above.");
+	}
+#endif
 }
 
 void add_install_path(NS::Build& b) noexcept {
@@ -1093,6 +1205,20 @@ void handle_build(Build& b) noexcept {
 		for (auto& x : b.post_link) execute(b, x);
 		break;
 	}
+	case NS::Build::Target::Assembly : {
+		if (b.source_files.empty()) break;
+
+		std::filesystem::create_directory(b.flags.get_build_path());
+
+		for (auto& x : b.pre_compile) execute(b, x);
+
+		::NS::Commands c;
+		c = compile_assembly({}, b);
+		execute(b, c);
+		for (auto& x : b.post_compile) execute(b, x);
+
+		break;
+	}
 	case NS::Build::Target::Exe :
 	case NS::Build::Target::Static :
 	{
@@ -1113,16 +1239,20 @@ void handle_build(Build& b) noexcept {
 		}
 
 		if (!b.flags.link_only) {
+			if (b.flags.assembly) {
+				c = compile_assembly({}, b);
+				execute(b, c);
+			}
+
 			c = compile_command_incremetal_check(b);
 			execute(b, c);
 			set_files_hashes(b.flags.get_temp_path(), new_state);
 			if (!b.flags.scratch) old_state = NS::State::get_unchanged(old_state, new_state);
 
-			for (auto& x : b.pre_compile) execute(b, x);
 			c = compile_command_object(old_state, b);
-			for (auto& x : b.post_compile) execute(b, x);
 
 			execute(b, c);
+			for (auto& x : b.post_compile) execute(b, x);
 		}
 		if (b.target == NS::Build::Target::Exe) {
 			c = compile_command_link_exe(b);
@@ -1141,8 +1271,8 @@ void handle_build(Build& b) noexcept {
 		new_state.save_to_file(b.flags.get_state_path());
 
 		if (b.target == NS::Build::Target::Exe && b.flags.run_after_compilation) {
-			std::string run =
-				NS::details::get_output_path(b).replace_extension("exe").generic_string();
+			std::string run = NS::details::get_output_path(b).generic_string();
+			printf("Running %s\n", run.c_str());
 			system(run.c_str());
 		}
 
@@ -1211,6 +1341,8 @@ std::string NS::details::get_cli_flag(
 		X("-O0", "/O0");
 	case NS::Cli_Opts::No_Inline :
 		X("-fno-inline", "/Ob0");
+	case NS::Cli_Opts::OpenMP :
+		X("-fopenmp", "/OpenMP");
 	case NS::Cli_Opts::Debug_Symbol_Link :
 		X("-g -gno-column-info", "/DEBUG");
 	case NS::Cli_Opts::Debug_Symbol_Compile :
@@ -1238,6 +1370,8 @@ std::string NS::details::get_cli_flag(
 		X(std::string("-o ") + param.data(), std::string("/Fo\"") + param.data() + "\"");
 	case NS::Cli_Opts::Exe_Output :
 		X(std::string("-o ") + param.data(), std::string("/Fo\"") + param.data() + "\"");
+	case NS::Cli_Opts::Assembly_Output :
+		X(std::string("-S -o ") + param.data(), "??");
 	case NS::Cli_Opts::Preprocessor_Output :
 		X(std::string("-o ") + param.data(), std::string("/Fi\"") + param.data() + "\"");
 	case NS::Cli_Opts::Force_Include :

@@ -64,9 +64,11 @@ struct Flags {
 	// For now i'm keeping it as everything is false by default, since you can only set a flag to
 	// true it should be enough ?
 	bool clean = false;
+	bool openmp = false;
 	bool release = false;
 	bool scratch = false;
 	bool install = false;
+	bool assembly = false;
 	bool show_help = false;
 	bool link_only = false;
 	bool no_inline = false;
@@ -84,6 +86,7 @@ struct Flags {
 	inline static std::filesystem::path Default_State_Path = "state.txt";
 	inline static std::filesystem::path Default_Build_Path = "ease_build/";
 	inline static std::filesystem::path Default_Temp_Path = "ease_temp/";
+
 	inline static std::filesystem::path Default_Compile_Command_Path = "compile_commands.json";
 
 	std::optional<std::filesystem::path> state_file;
@@ -171,6 +174,7 @@ struct Build_Ptr {
 struct Build {
 	enum class Target {
 		Header_Only,
+		Assembly,
 		Static,
 		Shared,
 		None, // Use for export only for instance.
@@ -259,8 +263,10 @@ enum class Cli_Opts {
 	No_Optimisation,
 	Preprocess,
 	Arch,
+	Assembly_Output,
 	Debug_Symbol_Compile,
 	Debug_Symbol_Link,
+	OpenMP,
 	No_Inline
 };
 
