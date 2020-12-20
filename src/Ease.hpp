@@ -81,6 +81,10 @@ struct Flags {
 	size_t j = 0;
 	size_t verbose_level = 0;
 
+	std::vector<std::string> defines;
+	
+	std::vector<std::string> rest_args;
+
 	std::optional<size_t> release_level = std::nullopt;
 
 	inline static std::filesystem::path Default_State_Path = "state.txt";

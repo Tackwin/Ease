@@ -81,6 +81,10 @@ struct Flags {
 	size_t j = 0;
 	size_t verbose_level = 0;
 
+	std::vector<std::string> defines;
+	
+	std::vector<std::string> rest_args;
+
 	std::optional<size_t> release_level = std::nullopt;
 
 	inline static std::filesystem::path Default_State_Path = "state.txt";
@@ -444,6 +448,15 @@ NS::Flags NS::Flags::parse(int argc, char** argv) noexcept {
 			flags.output = argv[i];
 			flags.output = flags.output->lexically_normal();
 		}
+		if (strcmp(it, "-D") == 0 || strcmp(it, "--define") == 0) {
+			if (i + 1 >= argc) continue;
+			i++;
+			flags.defines.push_back(argv[i]);
+		}
+		if (strcmp(it, "--") == 0) {
+			for (++i; i < argc; ++i) flags.rest_args.push_back(argv[i]);
+			break;
+		}
 	}
 
 	if (flags.j < 1) flags.j = 1;
@@ -486,6 +499,10 @@ const char* NS::Flags::help_message() noexcept {
 	"                             Level 2 will show additional informations.\n"
 	"                    Exemple: ./Build.exe --verbose 0 | ./Build.exe --verbose 1\n\n"
 
+	"-D|--define <arg>            Add <arg> to the list of C macro definitions.\n"
+	"                    Exemple: ./Build.exe --define N_THREADS=5 | ./Build.exe --define A=1 -D B=2\n"
+	"                    Exemple: ./Build.exe --define FLAG -D V=1 -D \"un deux\"\n\n"
+
 	"--release [level]            Will compile the program using default option for release\n"
 	"                             (for instance, if the cli choosen is gcc, will compile using -O3)\n"
 	"                             if level is specified it will use the appropriate level of\n"
@@ -522,6 +539,11 @@ const char* NS::Flags::help_message() noexcept {
 	
 	"--no-compile-commands        Will not generate a compile_commands.json file.\n"
 	"                    Exemple: ./Build.exe --no-compile-commands\n\n"
+
+	"-- <rest_of_args>...         The rest of the arguments after -- will be forwared to the next\n"
+	"                             stage of building. It will commonly be running. --run must be\n"
+	"                             specified altough."
+	"                    Exemple: ./Build.exe --run -- arg1 arg2 arg3\n\n"
 	
 	"--compile-commands <path>    Set the path to generate compile_commands.json file. If <path> is\n"
 	"                             a directory the file will be named compile_commands.json else it\n"
@@ -597,6 +619,8 @@ size_t NS::Flags::hash() const noexcept {
 	h = combine(h, temp_path);
 	h = combine(h, compile_command_path);
 	h = combine(h, release_level);
+	for (auto& x : defines) h = combine(h, x);
+	for (auto& x : rest_args) h = combine(h, x);
 
 	return h;
 }
@@ -937,6 +961,7 @@ NS::Commands compile_command_object(const NS::State& state, const NS::Build& b) 
 		command += " " + get_cli_flag(b.cli, Cli_Opts::Object_Output, o.generic_string());
 
 		for (auto& d : b.defines) command += " " + get_cli_flag(b.cli, Cli_Opts::Define, d);
+		for (auto& d : b.flags.defines) command += " " + get_cli_flag(b.cli, Cli_Opts::Define, d);
 
 		for (auto& x : b.header_files) if (std::filesystem::is_directory(x))
 			command += " " + get_cli_flag(b.cli, Cli_Opts::Include, x.generic_string());
@@ -1002,6 +1027,7 @@ NS::Commands compile_assembly(const NS::State& state, const NS::Build& b) noexce
 
 
 		for (auto& d : b.defines) command += " " + get_cli_flag(b.cli, Cli_Opts::Define, d);
+		for (auto& d : b.flags.defines) command += " " + get_cli_flag(b.cli, Cli_Opts::Define, d);
 
 		for (auto& x : b.header_files) if (std::filesystem::is_directory(x))
 			command += " " + get_cli_flag(b.cli, Cli_Opts::Include, x.generic_string());
@@ -1094,8 +1120,8 @@ NS::Commands compile_command_incremetal_check(const NS::Build& b) noexcept {
 		command += " " + get_cli_flag(b.cli, Cli_Opts::Preprocessor_Output, p.generic_string());
 
 		if (b.flags.openmp) command += " " + get_cli_flag(b.cli, Cli_Opts::OpenMP);
-		for (auto& d : b.defines)
-			command += " " + get_cli_flag(b.cli, Cli_Opts::Define, d);
+		for (auto& d : b.defines) command += " " + get_cli_flag(b.cli, Cli_Opts::Define, d);
+		for (auto& d : b.flags.defines) command += " " + get_cli_flag(b.cli, Cli_Opts::Define, d);
 
 		for (auto& x : b.header_files) if (std::filesystem::is_directory(x))
 			command += " " + get_cli_flag(b.cli, Cli_Opts::Include, x.generic_string());
@@ -1272,6 +1298,7 @@ void handle_build(Build& b) noexcept {
 
 		if (b.target == NS::Build::Target::Exe && b.flags.run_after_compilation) {
 			std::string run = NS::details::get_output_path(b).generic_string();
+			for (auto& x : b.flags.rest_args) run += " " + x;
 			printf("Running %s\n", run.c_str());
 			system(run.c_str());
 		}
