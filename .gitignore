@@ -1,4 +1,5 @@
 .vscode/
+install/
 *.exe
 *.ilk
 *.pdb
