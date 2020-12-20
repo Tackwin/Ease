@@ -38,6 +38,11 @@ Then just build and run this file with your favorite compiler !
 clang++ -std=c++17 Build.cpp && ./a.out
 ```
 
+Beware that on linux you must link pthread !
+```sh
+clang++ -pthread -std=c++17 Build.cpp && ./a.out
+```
+
 
 One more example, the actual Build.cpp used to build Ease itself ! :)
 ```c++
@@ -70,7 +75,8 @@ You get right off the bat some flags and parameter that you can use to configure
 ## Feature
 
 - Incremental Compiling (By running the preprocessor only and comparing hashes)
-- Can compile Header Only and Executables
+- Can compile Header Only, Executables, static and dynamic libraries.
+- Built in install system.
 - Support for cl and gcc-family cli
 
 ## Gallery
@@ -83,6 +89,12 @@ Fantastic project that fetch or load you conversation history from Messenger and
 you with fresh Statistics !
 [Messenger Viewer][MessengerView]
 
+Here we have my project to make the fastest compute_histogram function. [GGFHistogram][GGFHistogram]
+
+My submissions for the 2020 advent of code, it heavely uses multi target options ! [Advent][Advent]
+
+A GUI to experiment with the NEAT algorithm [NEAT][NEAT]
+
 ## Release History
 
 * 0.0.0
@@ -92,4 +104,6 @@ you with fresh Statistics !
 [Ease_Header]: https://github.com/Tackwin/BuildSelf/blob/master/Ease.hpp
 [Inopio]: https://github.com/Inopio/AmongUsXArduino
 [MessengerView]: https://github.com/Tackwin/Messenger_Viewer
-
+[GGFHistogram]: https://github.com/Tackwin/GGFHistogram
+[Advent]: https://github.com/Tackwin/Advent/tree/master/2020
+[NEAT]: https://github.com/Tackwin/NEAT
