@@ -72,6 +72,7 @@ struct Flags {
 	bool show_help = false;
 	bool link_only = false;
 	bool no_inline = false;
+	bool compile_native = false;
 	bool generate_debug = false;
 	bool no_install_path = false;
 	bool show_help_install = false;
@@ -271,6 +272,7 @@ enum class Cli_Opts {
 	Debug_Symbol_Compile,
 	Debug_Symbol_Link,
 	OpenMP,
+	Native,
 	No_Inline
 };
 

@@ -72,6 +72,7 @@ struct Flags {
 	bool show_help = false;
 	bool link_only = false;
 	bool no_inline = false;
+	bool compile_native = false;
 	bool generate_debug = false;
 	bool no_install_path = false;
 	bool show_help_install = false;
@@ -271,6 +272,7 @@ enum class Cli_Opts {
 	Debug_Symbol_Compile,
 	Debug_Symbol_Link,
 	OpenMP,
+	Native,
 	No_Inline
 };
 
@@ -365,6 +367,9 @@ NS::Flags NS::Flags::parse(int argc, char** argv) noexcept {
 		}
 		if (strcmp(it, "--clean") == 0) {
 			flags.clean = true;
+		}
+		if (strcmp(it, "--native") == 0) {
+			flags.compile_native = true;
 		}
 		if (strcmp(it, "--debug") == 0) {
 			flags.generate_debug = true;
@@ -514,6 +519,9 @@ const char* NS::Flags::help_message() noexcept {
 	"                             the flag --help-env\n"
 	"                    Exemple: ./Build.exe --install\n\n"
 
+	"--native                     Will target the host cpu for compilation where applicable.\n"
+	"                    Exemple: ./Build.exe --native\n\n"
+
 	"--build-dir <path>           Change the default build path used by Ease to keep state across\n"
 	"                             runs. Default to ease_build/"
 	"                    Exemple: ./Build.exe --build-dir new_build/path/\n\n"
@@ -606,6 +614,7 @@ size_t NS::Flags::hash() const noexcept {
 	h = combine(h, no_inline);
 	h = combine(h, show_help);
 	h = combine(h, link_only);
+	h = combine(h, compile_native);
 	h = combine(h, generate_debug);
 	h = combine(h, no_install_path);
 	h = combine(h, show_help_install);
@@ -947,6 +956,7 @@ NS::Commands compile_command_object(const NS::State& state, const NS::Build& b) 
 		command += " " + get_cli_flag(b.cli, Cli_Opts::Compile);
 		command += " " + get_cli_flag(b.cli, Cli_Opts::Std_Version, b.std_ver);
 
+		if (b.flags.compile_native) command += " " + get_cli_flag(b.cli, Cli_Opts::Native);
 		if (b.flags.openmp) command += " " + get_cli_flag(b.cli, Cli_Opts::OpenMP);
 		if (b.flags.release){
 			std::string param = "3";
@@ -1014,6 +1024,7 @@ NS::Commands compile_assembly(const NS::State& state, const NS::Build& b) noexce
 		command += " " + get_cli_flag(b.cli, Cli_Opts::Std_Version, b.std_ver);
 		command += " " + get_cli_flag(b.cli, Cli_Opts::Assembly_Output, o.generic_string());
 
+		if (b.flags.compile_native) command += " " + get_cli_flag(b.cli, Cli_Opts::Native);
 		if (b.flags.openmp) command += " " + get_cli_flag(b.cli, Cli_Opts::OpenMP);
 		if (b.flags.release){
 			std::string param = "3";
@@ -1119,6 +1130,7 @@ NS::Commands compile_command_incremetal_check(const NS::Build& b) noexcept {
 		command += " " + get_cli_flag(b.cli, Cli_Opts::Std_Version, b.std_ver);
 		command += " " + get_cli_flag(b.cli, Cli_Opts::Preprocessor_Output, p.generic_string());
 
+		command += " " + get_cli_flag(b.cli, Cli_Opts::Native);
 		if (b.flags.openmp) command += " " + get_cli_flag(b.cli, Cli_Opts::OpenMP);
 		for (auto& d : b.defines) command += " " + get_cli_flag(b.cli, Cli_Opts::Define, d);
 		for (auto& d : b.flags.defines) command += " " + get_cli_flag(b.cli, Cli_Opts::Define, d);
@@ -1299,6 +1311,7 @@ void handle_build(Build& b) noexcept {
 		if (b.target == NS::Build::Target::Exe && b.flags.run_after_compilation) {
 			std::string run = NS::details::get_output_path(b).generic_string();
 			for (auto& x : b.flags.rest_args) run += " " + x;
+			if (!Env::Win32) run = "./" + run;
 			printf("Running %s\n", run.c_str());
 			system(run.c_str());
 		}
@@ -1377,6 +1390,8 @@ std::string NS::details::get_cli_flag(
 
 	case NS::Cli_Opts::Arch :
 		X(std::string("-m32"), "");
+	case NS::Cli_Opts::Native :
+		X(std::string("-march=native"), "");
 	case NS::Cli_Opts::Compile :
 		X(std::string("-c"), std::string("/c"));
 	case NS::Cli_Opts::Link_Shared :
