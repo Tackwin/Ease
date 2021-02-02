@@ -241,6 +241,9 @@ struct Build {
 	void add_source(const std::filesystem::path& f) noexcept;
 	void add_source_recursively(const std::filesystem::path& f) noexcept;
 
+	void del_source(const std::filesystem::path& f) noexcept;
+	void del_source_recursively(const std::filesystem::path& f) noexcept;
+
 	void add_library(const std::filesystem::path& f) noexcept;
 	void add_library_path(const std::filesystem::path& f) noexcept;
 
@@ -284,9 +287,12 @@ struct Env {
 		#else
 		false;
 		#endif
+	
 };
 
 namespace details {
+	std::string escape(std::string_view in) noexcept;
+	
 	std::string get_cli_flag(
 		Build::Cli cli, Cli_Opts opts, std::string_view param = ""
 	) noexcept;

@@ -412,6 +412,35 @@ void NS::Build::add_source_recursively(const std::filesystem::path& f) noexcept 
 		add_source(y);
 	}
 }
+
+void NS::Build::del_source(const std::filesystem::path& f) noexcept {
+	auto x = f;
+	x = x.lexically_normal();
+
+	for (size_t i = source_files.size() - 1; i + 1 > 0; --i) {
+		if (source_files[i] == x) source_files.erase(std::begin(source_files) + i);
+	}
+}
+
+void NS::Build::del_source_recursively(const std::filesystem::path& f) noexcept {
+	if (!std::filesystem::is_directory(f)) {
+		printf(
+			"Can't search recursively for %s, it is not a directory.\n",
+			f.generic_string().c_str()
+		);
+		return;
+	}
+	for (auto& x : std::filesystem::recursive_directory_iterator(f)) {
+		if (!std::filesystem::is_regular_file(x)) continue;
+		if (x.path().extension() != ".c" && x.path().extension() != ".cpp") continue;
+
+		auto y = x.path();
+		y = y.lexically_normal();
+		del_source(y);
+	}
+}
+
+
 void NS::Build::add_header(const std::filesystem::path& f) noexcept {
 	auto x = f;
 	x = x.lexically_normal();
@@ -1055,6 +1084,18 @@ int main(int argc, char** argv) {
 }
 #define main dummy_main
 
+
+std::string details::escape(std::string_view in) noexcept {
+	std::string out;
+
+	for (auto& c : in) {
+		if (c == '"') out += '\\';
+		out += c;
+	}
+
+	return '"' + out + '"';
+}
+
 std::string NS::details::get_cli_flag(
 	NS::Build::Cli cli, NS::Cli_Opts opts, std::string_view param
 ) noexcept {
@@ -1068,6 +1109,7 @@ std::string NS::details::get_cli_flag(
 			return "???"; \
 	}
 
+	using details::escape;
 
 	switch (opts) {
 	case NS::Cli_Opts::Preprocess :
@@ -1098,11 +1140,11 @@ std::string NS::details::get_cli_flag(
 	case NS::Cli_Opts::Define :
 		X(std::string("-D") + param.data(), std::string("/D") + param.data());
 	case NS::Cli_Opts::Include :
-		X(std::string("-I") + param.data(), std::string("/I") + param.data());
+		X(std::string("-I") + escape(param), std::string("/I") + escape(param));
 	case NS::Cli_Opts::Std_Version :
 		X(std::string("-std=") + param.data(), std::string("/std:") + param.data());
 	case NS::Cli_Opts::Lib_Path :
-		X(std::string("-L") + param.data(), std::string("/LIBPATH:") + param.data());
+		X(std::string("-L") + escape(param), std::string("/LIBPATH:") + escape(param));
 	case NS::Cli_Opts::Object_Output :
 		X(std::string("-o ") + param.data(), std::string("/Fo\"") + param.data() + "\"");
 	case NS::Cli_Opts::Exe_Output :
