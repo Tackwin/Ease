@@ -4,3 +4,4 @@ install/
 *.ilk
 *.pdb
 
+test/ease_build/
