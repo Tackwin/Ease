@@ -1,5 +1,10 @@
-extern void f() noexcept;
+#include <assert.h>
+#include <stdio.h>
 
-void main() {
-	f();
+extern int f() noexcept;
+
+int main() {
+	assert(f() == 42);
+	printf("OK.\n");
+	return 0;
 }

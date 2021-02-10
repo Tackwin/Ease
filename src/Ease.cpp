@@ -113,6 +113,9 @@ NS::Flags NS::Flags::parse(int argc, char** argv) noexcept {
 		if (strcmp(it, "--no-compile-commands") == 0) {
 			flags.no_compile_commands = true;
 		}
+		if (strcmp(it, "--no-watch-source-changed") == 0) {
+			flags.no_watch_source_changed = true;
+		}
 		if (strcmp(it, "--compile-commands") == 0) {
 			if (i + 1 >= argc) continue;
 			i++;
@@ -185,6 +188,9 @@ const char* NS::Flags::help_message() noexcept {
 
 	"--openmp                     Will compile with openmp if available.\n"
 	"                    Exemple: ./Build.exe --openmp\n\n"
+
+	"--no-watch-source-changed    Will disable watching for change in Build.cpp.\n"
+	"                    Exemple: ./Build.exe --no-watch-source-changed\n\n"
 
 	"--assembly                   Will compile to output assembly file.\n"
 	"                    Exemple: ./Build.exe --assembly\n\n"
@@ -315,6 +321,7 @@ size_t NS::Flags::hash() const noexcept {
 	h = combine(h, show_help_install);
 	h = combine(h, no_compile_commands);
 	h = combine(h, run_after_compilation);
+	h = combine(h, no_watch_source_changed);
 	h = combine(h, j);
 	h = combine(h, verbose_level);
 	h = combine(h, state_file);
@@ -325,6 +332,30 @@ size_t NS::Flags::hash() const noexcept {
 	h = combine(h, release_level);
 	for (auto& x : defines) h = combine(h, x);
 	for (auto& x : rest_args) h = combine(h, x);
+
+	return h;
+}
+
+size_t NS::Flags::rebuild_hash() const noexcept {
+	auto combine = [](auto seed, auto v) {
+		std::hash<std::remove_cv_t<decltype(v)>> hasher;
+		seed ^= hasher(v) + 0x9e3779b9 + (seed<<6) + (seed>>2);
+		return seed;
+	};
+
+	size_t h = 0;
+	h = combine(h, clean);
+	h = combine(h, openmp);
+	h = combine(h, release);
+	h = combine(h, scratch);
+	h = combine(h, assembly);
+	h = combine(h, no_inline);
+	h = combine(h, link_only);
+	h = combine(h, compile_native);
+	h = combine(h, generate_debug);
+	h = combine(h, state_file);
+	h = combine(h, release_level);
+	for (auto& x : defines) h = combine(h, x);
 
 	return h;
 }
@@ -487,47 +518,65 @@ void NS::Build::add_default_win32() noexcept {
 
 // ===================== State
 
-NS::State NS::State::load_from_file(const std::filesystem::path& p) noexcept {
-	NS::State state;
+NS::States NS::States::load_from_file(const std::filesystem::path& p) noexcept {
+	NS::States states;
 	auto text = read_file(p);
 
 	std::istringstream stream(text);
 	std::string line;
 
-	if (std::getline(stream, line)) std::sscanf(line.c_str(), "%zu", &state.flags_hash);
+	if (std::getline(stream, line)) states.last_write_build_script = std::stoull(line.c_str());
 
+	// each build begins with a pair of line <name, number_of_line>
 	while(std::getline(stream, line)) {
 		trim(line);
-		std::filesystem::path f = line;
-		f = f.lexically_normal();
-		auto& p = state.files[f];
+		std::string name = line;
+		std::getline(stream, line);
+		size_t l = std::stoull(line);
 
-		if (std::getline(stream, line)) {
-			p = (std::uint64_t)std::stoull(line);
+		auto& s = states.states[name];
+		if (std::getline(stream, line)) std::sscanf(line.c_str(), "%zu", &s.flags_hash);
+		if (std::getline(stream, line)) std::sscanf(line.c_str(), "%zu", &s.rebuild_flag_hash);
+		
+		for (size_t i = 0; i < l && std::getline(stream, line); ++i) {
+			trim(line);
+			std::filesystem::path f = line;
+			f = f.lexically_normal();
+			auto& p = s.files[f];
+
+			if (std::getline(stream, line)) p = (std::uint64_t)std::stoull(line);
 		}
 	}
-	
-	return state;
+
+	return states;
 }
-NS::State NS::State::get_unchanged(const State& a, const State& b) noexcept {
-	NS::State s;
+NS::Build_State NS::Build_State::get_unchanged(const Build_State& a, const Build_State& b) noexcept {
+	NS::Build_State s;
 
 	for (auto [k, v] : a.files) if (b.files.count(k) > 0 && b.files.at(k) == v) s.files[k] = v;
 
 	return s;
 }
 
-void NS::State::save_to_file(const std::filesystem::path& p) noexcept {
+void NS::States::save_to_file(const std::filesystem::path& p) noexcept {
 	std::string to_dump = "";
-	to_dump += std::to_string(flags_hash) + "\n";
-	for (auto& [a, b] : files) {
-		to_dump += a.generic_string() + "\n";
-		to_dump += std::to_string(b) + "\n";
+	to_dump += std::to_string(last_write_build_script) + "\n";
+
+	for (auto& [name, s] : states) {
+		to_dump += name + "\n";
+		to_dump += std::to_string(s.files.size()) + "\n";
+
+		to_dump += std::to_string(s.flags_hash) + "\n";
+		to_dump += std::to_string(s.rebuild_flag_hash) + "\n";
+		for (auto& [a, b] : s.files) {
+			to_dump += a.generic_string() + "\n";
+			to_dump += std::to_string(b) + "\n";
+		}
 	}
 
 	dump_to_file(to_dump, p);
 }
-NS::State set_files_hashes(const std::filesystem::path& p, NS::State& s) noexcept {
+NS::Build_State set_files_hashes(const std::filesystem::path& p, NS::Build_State& s) noexcept {
 	s.files.clear();
 	for (auto& x : std::filesystem::recursive_directory_iterator(p)) {
 		if (!x.is_regular_file()) continue;
@@ -653,7 +702,7 @@ std::string produce_single_header(NS::Build& b) noexcept {
 	return single;
 }
 
-NS::Commands compile_command_object(const NS::State& state, const NS::Build& b) noexcept {
+NS::Commands compile_command_object(const NS::Build_State& state, const NS::Build& b) noexcept {
 	using namespace NS;
 	using namespace details;
 	NS::Commands commands;
@@ -715,7 +764,7 @@ NS::Commands compile_command_object(const NS::State& state, const NS::Build& b) 
 }
 
 
-NS::Commands compile_assembly(const NS::State& state, const NS::Build& b) noexcept {
+NS::Commands compile_assembly(const NS::Build_State& state, const NS::Build& b) noexcept {
 	using namespace NS;
 	using namespace details;
 	NS::Commands commands;
@@ -883,14 +932,16 @@ void execute(const NS::Build& build, const NS::Commands& c) noexcept {
 			for (size_t j = i; j < c.entries.size(); j += build.flags.j) {
 				if (stop_flag) return;
 
-				printf(
-					"[%*d/%*d] %s\n",
-					(int)(1 + std::log10((double)c.entries.size())),
-					(int)(1 + j),
-					(int)(1 + std::log10((double)c.entries.size())),
-					(int)c.entries.size(),
-					c.entries[j].short_desc.c_str()
-				);
+				if (build.flags.verbose_level >= 0) {
+					printf(
+						"[%*d/%*d] %s\n",
+						(int)(1 + std::log10((double)c.entries.size())),
+						(int)(1 + j),
+						(int)(1 + std::log10((double)c.entries.size())),
+						(int)c.entries.size(),
+						c.entries[j].short_desc.c_str()
+					);
+				}
 				if (build.flags.verbose_level > 0) printf("%s\n", c.entries[j].command.c_str());
 				auto ret = system(c.entries[j].command.c_str());
 			
@@ -936,21 +987,18 @@ void add_install_path(NS::Build& b) noexcept {
 	}
 }
 
-void handle_build(Build& b) noexcept;
-void handle_build(Build& b) noexcept {
+void handle_build(Build& b, NS::States& new_states) noexcept {
 	printf("Building %s\n", b.name.c_str());
 
 	if (!b.flags.no_install_path) add_install_path(b);
 
-	NS::State old_state = {};
-	NS::State new_state = {};
+	NS::Build_State new_state = {};
 
 	new_state.flags_hash = b.flags.hash();
-	if (!b.flags.scratch && std::filesystem::is_regular_file(b.flags.get_state_path()))
-		old_state = NS::State::load_from_file(b.flags.get_state_path());
+	new_state.rebuild_flag_hash = b.flags.rebuild_hash();
 
-	if (new_state.flags_hash != old_state.flags_hash) {
-		old_state = {};
+	if (b.flags.scratch || new_state.rebuild_flag_hash != b.current_state.rebuild_flag_hash) {
+		b.current_state = {};
 		b.flags.scratch = true;
 	}
 
@@ -1009,9 +1057,10 @@ void handle_build(Build& b) noexcept {
 			c = compile_command_incremetal_check(b);
 			execute(b, c);
 			set_files_hashes(b.flags.get_temp_path(), new_state);
-			if (!b.flags.scratch) old_state = NS::State::get_unchanged(old_state, new_state);
+			if (!b.flags.scratch)
+				b.current_state = NS::Build_State::get_unchanged(b.current_state, new_state);
 
-			c = compile_command_object(old_state, b);
+			c = compile_command_object(b.current_state, b);
 
 			execute(b, c);
 			for (auto& x : b.post_compile) execute(b, x);
@@ -1030,8 +1079,6 @@ void handle_build(Build& b) noexcept {
 		execute(b, c);
 		for (auto& x : b.post_link) execute(b, x);
 
-		new_state.save_to_file(b.flags.get_state_path());
-
 		if (b.target == NS::Build::Target::Exe && b.flags.run_after_compilation) {
 			std::string run = NS::details::get_output_path(b).generic_string();
 			for (auto& x : b.flags.rest_args) run += " " + x;
@@ -1049,15 +1096,73 @@ void handle_build(Build& b) noexcept {
 
 	if (b.flags.install) NS::details::install_build(b);
 
-	if (b.next.b) handle_build(*b.next.b);
+	if (b.next.b) handle_build(*b.next.b, new_states);
+	
+	new_states.states[b.name] = new_state;
+}
+
+std::string details::escape(std::string_view in) noexcept {
+	std::string out;
+
+	for (auto& c : in) {
+		if (c == '"') out += '\\';
+		out += c;
+	}
+
+	return '"' + out + '"';
+}
+
+// Just...
+// https://stackoverflow.com/questions/61030383/how-to-convert-stdfilesystemfile-time-type-to-time-t
+template <typename TP>
+auto stupid_function_that_convert_between_unspecified_file_clock_to_system_clock_thank_cpp17(TP tp)
+{
+	using namespace std::chrono;
+	return time_point_cast<system_clock::duration>(tp - TP::clock::now() + system_clock::now());
 }
 
 int main(int argc, char** argv) {
 	extern NS::Build build(NS::Flags flags) noexcept;
+
+	if (argc > 2 && strcmp(argv[1], "__EASE__STAGE_1__") == 0) {
+		std::string move_original = "mv ";
+		move_original += details::escape(argv[2]) + " ";
+		move_original += " __ease__old_exe";
+		system(move_original.c_str());
+
+		std::string command_copy = "mv ";
+		command_copy += details::escape(argv[0]);
+		command_copy += " ";
+		command_copy += details::escape(argv[2]);
+
+		if (system(command_copy.c_str()) == 0) {
+			std::string stage2_command = details::escape(argv[2]);
+			stage2_command += " __EASE__STAGE_2__ ";
+			for (size_t i = 3; i < argc; ++i) {
+				stage2_command += " ";
+				stage2_command += details::escape(argv[i]);
+			}
+
+			stage2_command = "\"" + stage2_command + "\"";
+			return system(stage2_command.c_str());
+		}
+		return -1;
+	}
+	if (argc > 1 && strcmp(argv[1], "__EASE__STAGE_2__") == 0) {
+		std::string command_remove = "rm __ease__old_exe";
+
+		system(command_remove.c_str());
+
+		// Shift the command to continue as-if __EASE__STAGE_2__ were not passed
+		// as args.
+		argc -= 1;
+		for (size_t i = 1; i < argc; ++i) argv[i] = argv[i + 1];
+	}
+
+	NS::Working_Directory = std::filesystem::absolute(std::filesystem::current_path());
 	auto flags = NS::Flags::parse(argc - 1, argv + 1);
 
 	auto b = build(flags);
-	NS::Working_Directory = std::filesystem::absolute(std::filesystem::current_path());
 
 	if (flags.show_help) {
 		printf("%s", NS::Flags::help_message());
@@ -1077,24 +1182,82 @@ int main(int argc, char** argv) {
 		std::filesystem::remove_all(flags.get_temp_path());
 		return 0;
 	}
+	std::filesystem::create_directory(flags.get_build_path());
+	std::filesystem::create_directory(flags.get_temp_path());
 
-	handle_build(b);
+	NS::States old_states;
+	NS::States new_states;
+	if (!b.flags.scratch && std::filesystem::is_regular_file(flags.get_state_path()))
+		old_states = NS::States::load_from_file(flags.get_state_path());
+
+	if (!flags.no_watch_source_changed) {
+
+		// I don't want to comment on these stupid lines...
+		// at least it's portable :^)
+		auto stupid_inermediary_chrono_type_last_write =
+			std::filesystem::last_write_time(NS::Env::Build_Script_Path);
+		auto stupidier_inermediary_chrono_type_last_write =
+			stupid_function_that_convert_between_unspecified_file_clock_to_system_clock_thank_cpp17(
+				stupid_inermediary_chrono_type_last_write
+			).time_since_epoch();
+		auto last_write = std::chrono::duration_cast<std::chrono::seconds>(
+			stupidier_inermediary_chrono_type_last_write
+		).count();
+
+		// WHEN C++ WILL SORT ITS SHIT OUT... We will be able to just use the UNIX_TIMESTAMP macro
+		// here, and save us a variable in the state.txt
+
+		if (last_write > old_states.last_write_build_script) {
+			printf("Detected change in %s... Recompiling.\n", NS::Env::Build_Script_Path);
+
+			old_states.last_write_build_script = last_write;
+			old_states.save_to_file(flags.get_state_path());
+
+			std::string command_stage;
+			std::string compile_command;
+
+			compile_command += "clang++ -std=c++17 -o __ease__stage1.exe ";
+			compile_command += NS::Env::Build_Script_Path;
+			
+			if (system(compile_command.c_str()) == 0) {
+				command_stage += "__ease__stage1.exe";
+				command_stage += " __EASE__STAGE_1__";
+				command_stage += " ";
+				command_stage += details::escape(argv[0]);
+
+				for (size_t i = 1; i < argc; ++i) {
+					command_stage += " ";
+					command_stage += details::escape(argv[i]);
+				}
+
+				return system(command_stage.c_str());
+			} else {
+				printf(
+					"There was a problem with the automatic recompilation of the build script: \n"
+				);
+				printf("    %s\n", NS::Env::Build_Script_Path);
+				printf("Proceeding without recompilation...\n");
+			}
+		}
+
+		new_states.last_write_build_script = old_states.last_write_build_script;
+	}
+
+	auto next_ptr = &b;
+	while(next_ptr) {
+		next_ptr->current_state = old_states.states[next_ptr->name];
+		next_ptr = next_ptr->next.b;
+	}
+
+	handle_build(b, new_states);
+
+	new_states.save_to_file(b.flags.get_state_path());
 
 	return 0;
 }
-#define main dummy_main
-
-
-std::string details::escape(std::string_view in) noexcept {
-	std::string out;
-
-	for (auto& c : in) {
-		if (c == '"') out += '\\';
-		out += c;
-	}
-
-	return '"' + out + '"';
-}
+#define main __unused__;\
+	const char* EASE_NAMESPACE::Env::Build_Script_Path = __FILE__;\
+	Build build
 
 std::string NS::details::get_cli_flag(
 	NS::Build::Cli cli, NS::Cli_Opts opts, std::string_view param
@@ -1197,7 +1360,7 @@ constexpr char BASE64_TABLE[] =  {'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
 
 std::string unique_name(const std::filesystem::path& path) noexcept {
 	std::string ret = path.filename().generic_string();
-	auto h = hash(ret);
+	auto h = hash(path.generic_string());
 
 	ret += "_";
 	ret += BASE64_TABLE[h % 64];

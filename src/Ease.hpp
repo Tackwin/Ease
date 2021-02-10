@@ -48,6 +48,7 @@ exit
 #include <string>
 #include <optional>
 #include <filesystem>
+#include <unordered_map>
 
 #ifndef EASE_NAMESPCE
 #define EASE_NAMESPACE Ease
@@ -78,9 +79,10 @@ struct Flags {
 	bool show_help_install = false;
 	bool no_compile_commands = false;
 	bool run_after_compilation = false;
+	bool no_watch_source_changed = false;
 
 	size_t j = 0;
-	size_t verbose_level = 0;
+	int verbose_level = 0;
 
 	std::vector<std::string> defines;
 	
@@ -123,14 +125,22 @@ struct Flags {
 	static const char* help_install_message() noexcept;
 
 	size_t hash() const noexcept;
+	size_t rebuild_hash() const noexcept;
 };
 
-struct State {
+struct Build_State {
 	size_t flags_hash = 0;
+	size_t rebuild_flag_hash = 0;
 	std::map<std::filesystem::path, std::uint64_t> files;
 
-	static State load_from_file(const std::filesystem::path& p) noexcept;
-	static State get_unchanged(const State& a, const State& b) noexcept;
+	static Build_State get_unchanged(const Build_State& a, const Build_State& b) noexcept;
+};
+
+struct States {
+	std::unordered_map<std::string, Build_State> states;
+	size_t last_write_build_script = 0;
+
+	static States load_from_file(const std::filesystem::path& p) noexcept;
 	void save_to_file(const std::filesystem::path& p) noexcept;
 };
 
@@ -234,6 +244,7 @@ struct Build {
 	std::vector<std::filesystem::path> to_install;
 
 	Build_Ptr next;
+	Build_State current_state;
 
 	static Build get_default(Flags flags = {}) noexcept;
 
@@ -287,7 +298,8 @@ struct Env {
 		#else
 		false;
 		#endif
-	
+
+	static const char* Build_Script_Path;
 };
 
 namespace details {
