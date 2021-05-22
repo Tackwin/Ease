@@ -5,6 +5,6 @@ extern int f() noexcept;
 
 int main() {
 	assert(f() == 42);
-	printf("OK.\n");
+	printf("Extern: OK.\n");
 	return 0;
 }

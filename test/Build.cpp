@@ -19,9 +19,9 @@ Build extern_(Flags flags) noexcept {
 }
 
 Build main(Flags flags) noexcept {
-	auto b = hello(flags);
-	b.next = extern_(flags);
-	return b;
+	return Build::sequentials({
+		hello(flags), extern_(flags)
+	});
 }
 
 

@@ -66,6 +66,7 @@ struct Flags {
 	// true it should be enough ?
 	bool clean = false;
 	bool openmp = false;
+	bool silent = false;
 	bool release = false;
 	bool scratch = false;
 	bool install = false;
@@ -73,6 +74,7 @@ struct Flags {
 	bool show_help = false;
 	bool link_only = false;
 	bool no_inline = false;
+	bool profile_build = false;
 	bool no_default_lib = false;
 	bool compile_native = false;
 	bool generate_debug = false;
@@ -282,6 +284,7 @@ enum class Cli_Opts {
 	Include,
 	Link,
 	Lib_Path,
+	Time_Trace,
 	Define,
 	Optimisation,
 	No_Optimisation,
