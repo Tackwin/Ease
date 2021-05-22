@@ -9,6 +9,7 @@
 #include <cctype>
 #include <locale>
 #include <thread>
+#include <cstdarg>
 
 #ifndef EASE_HPP
 #include "Ease.hpp"
@@ -44,7 +45,7 @@ std::string ltrim_copy(std::string s) {
 
 
 std::uint64_t hash(const std::string& str) noexcept;
-std::string unique_name(const std::filesystem::path& path) noexcept;
+std::string unique_name(const Build& build, const std::filesystem::path& path) noexcept;
 
 // FILE IO
 void dump_to_file(std::string_view str, const std::filesystem::path& p) noexcept;
@@ -106,6 +107,12 @@ NS::Flags NS::Flags::parse(int argc, char** argv) noexcept {
 		}
 		if (strcmp(it, "--no-install-path") == 0) {
 			flags.no_install_path = true;
+		}
+		if (strcmp(it, "--no-default-lib") == 0) {
+			flags.no_default_lib = true;
+		}
+		if (strcmp(it, "--recompile") == 0) {
+			flags.recompile_build_script = true;
 		}
 		if (strcmp(it, "--openmp") == 0) {
 			flags.openmp = true;
@@ -223,6 +230,9 @@ const char* NS::Flags::help_message() noexcept {
 	"--native                     Will target the host cpu for compilation where applicable.\n"
 	"                    Exemple: ./Build.exe --native\n\n"
 
+	"--recompile                   Will recompile the build script before running it.\n"
+	"                    Exemple: ./Build.exe --recompile-build-script\n\n"
+
 	"--build-dir <path>           Change the default build path used by Ease to keep state across\n"
 	"                             runs. Default to ease_build/"
 	"                    Exemple: ./Build.exe --build-dir new_build/path/\n\n"
@@ -237,6 +247,9 @@ const char* NS::Flags::help_message() noexcept {
 	
 	"--debug                      Will generate alongside the program debug symbols\n"
 	"                             It is not mutually exclusive with --release"
+	"                    Exemple: ./Build.exe --debug\n\n"
+	
+	"--no-default-lib             Will not link against the default libraries.\n"
 	"                    Exemple: ./Build.exe --debug\n\n"
 	
 	"--no-inline                  Will set the compiler flag to not inline any function, if\n"
@@ -317,10 +330,12 @@ size_t NS::Flags::hash() const noexcept {
 	h = combine(h, link_only);
 	h = combine(h, compile_native);
 	h = combine(h, generate_debug);
+	h = combine(h, no_default_lib);
 	h = combine(h, no_install_path);
 	h = combine(h, show_help_install);
 	h = combine(h, no_compile_commands);
 	h = combine(h, run_after_compilation);
+	h = combine(h, recompile_build_script);
 	h = combine(h, no_watch_source_changed);
 	h = combine(h, j);
 	h = combine(h, verbose_level);
@@ -355,6 +370,7 @@ size_t NS::Flags::rebuild_hash() const noexcept {
 	h = combine(h, generate_debug);
 	h = combine(h, state_file);
 	h = combine(h, release_level);
+	h = combine(h, recompile_build_script);
 	for (auto& x : defines) h = combine(h, x);
 
 	return h;
@@ -395,7 +411,7 @@ NS::Build NS::Build::get_default(::NS::Flags flags) noexcept {
 	NS::Build build;
 	build.cli = Cli::Gcc;
 	build.target = Target::Exe;
-	build.std_ver = "c++17";
+	build.std_ver = "c++20";
 	build.compiler = "clang++";
 	build.archiver = "llvm-ar";
 	build.arch = Arch::x64;
@@ -403,6 +419,20 @@ NS::Build NS::Build::get_default(::NS::Flags flags) noexcept {
 	build.flags = flags;
 	return build;
 }
+NS::Build NS::Build::sequentials(std::vector<::NS::Build> builds) noexcept {
+	if (builds.empty()) return Build::get_default({});
+
+	Build curr = builds.back();
+
+	for (size_t i = builds.size() - 2; i + 1 > 0; --i) {
+		auto n = builds[i];
+		n.next = curr;
+		curr = n;
+	}
+
+	return curr;
+}
+
 void NS::Build::add_library(const std::filesystem::path& f) noexcept {
 	auto x = f;
 	x = x.lexically_normal();
@@ -480,6 +510,10 @@ void NS::Build::add_header(const std::filesystem::path& f) noexcept {
 void NS::Build::add_define(std::string str) noexcept {
 	defines.push_back(std::move(str));
 }
+void NS::Build::add_debug_defines() noexcept {
+	add_define("_DEBUG");
+	add_define("_ITERATOR_DEBUG_LEVEL=2");
+}
 
 void NS::Build::add_export(const std::filesystem::path& f) noexcept {
 	add_export(f, f);
@@ -511,6 +545,9 @@ std::filesystem::path NS::details::get_output_path(const Build& b) noexcept {
 void NS::Build::add_default_win32() noexcept {
 	add_library("Shell32");
 	add_library("Ole32");
+}
+void NS::Build::no_warnings_win32() noexcept {
+	add_define("_CRT_SECURE_NO_WARNINGS");
 }
 
 
@@ -714,12 +751,12 @@ NS::Commands compile_command_object(const NS::Build_State& state, const NS::Buil
 		auto c = x;
 
 		std::filesystem::path o = b.flags.get_build_path();
-		o += unique_name(x) + ".o";
+		o += unique_name(b, x) + ".o";
 		o = o.lexically_normal();
 
 		if (b.flags.link_only) continue;
 
-		auto test_file = unique_name(x);
+		auto test_file = unique_name(b, x);
 
 		// Check if this files has not changed
 		// (so it must first exists)
@@ -756,6 +793,8 @@ NS::Commands compile_command_object(const NS::Build_State& state, const NS::Buil
 			command +=
 				" " + get_cli_flag(b.cli, Cli_Opts::Debug_Symbol_Compile, x.generic_string());
 
+		if (b.arch == Build::Arch::x86) command += " " + get_cli_flag(b.cli, Cli_Opts::Arch_32);
+
 		command += " " + c.generic_string();
 		
 		commands.add_command(command, "Compile " + x.filename().generic_string(), x, o);
@@ -781,12 +820,12 @@ NS::Commands compile_assembly(const NS::Build_State& state, const NS::Build& b) 
 		// Here we ideally want to preverse the tree structure of the sources.
 		// But i don't want to just spam std::filesystem::cretate_directories here.
 		// so i don't know what i should do...
-		o += unique_name(x) + ".s";
+		o += unique_name(b, x) + ".s";
 		o = o.lexically_normal();
 
 		if (b.flags.link_only) continue;
 
-		auto test_file = unique_name(x);
+		auto test_file = unique_name(b, x);
 
 		// Check if this files has not changed
 		// (so it must first exists)
@@ -822,6 +861,8 @@ NS::Commands compile_assembly(const NS::Build_State& state, const NS::Build& b) 
 		if (b.flags.generate_debug)
 			command +=
 				" " + get_cli_flag(b.cli, Cli_Opts::Debug_Symbol_Compile, x.generic_string());
+	
+		if (b.arch == Build::Arch::x86) command += " " + get_cli_flag(b.cli, Cli_Opts::Arch_32);
 
 		command += " " + c.generic_string();
 		
@@ -843,7 +884,7 @@ NS::Commands compile_command_link_exe(const NS::Build& b) noexcept {
 	
 	for (auto x : b.source_files) {
 		std::filesystem::path o = b.flags.get_build_path();
-		o += unique_name(x) + ".o";
+		o += unique_name(b, x) + ".o";
 		o = o.lexically_normal();
 
 		command += o.generic_string() + " ";
@@ -856,8 +897,13 @@ NS::Commands compile_command_link_exe(const NS::Build& b) noexcept {
 	if (b.flags.openmp) command += get_cli_flag(b.cli, Cli_Opts::OpenMP) + " ";
 	if (b.flags.generate_debug)
 		command += get_cli_flag(b.cli, Cli_Opts::Debug_Symbol_Link) + " ";
+	if (b.flags.no_default_lib) command += get_cli_flag(b.cli, Cli_Opts::No_Default_Lib) + " ";
+
+	if (b.arch == Build::Arch::x86) command += get_cli_flag(b.cli, Cli_Opts::Arch_32) + " ";
 
 	auto exe_path = NS::details::get_output_path(b);
+	if (b.target == Build::Target::Shared)
+		exe_path = exe_path.replace_extension(".dll");
 
 	command += get_cli_flag(b.cli, Cli_Opts::Exe_Output, exe_path.generic_string()) + " ";
 	commands.add_command(command, "Link " + b.name, "", exe_path);
@@ -874,7 +920,7 @@ NS::Commands compile_command_link_static(const NS::Build& b) noexcept {
 
 	for (auto x : b.source_files) {
 		std::filesystem::path o = b.flags.get_build_path();
-		o += unique_name(x) + ".o";
+		o += unique_name(b, x) + ".o";
 		o = o.lexically_normal();
 
 		command += o.generic_string() + " ";
@@ -894,7 +940,7 @@ NS::Commands compile_command_incremetal_check(const NS::Build& b) noexcept {
 	for (auto x : b.source_files) {
 		auto f = x;
 		std::filesystem::path p = b.flags.get_temp_path();
-		p += unique_name(x) + ".pre";
+		p += unique_name(b, x) + ".pre";
 		p = p.lexically_normal();
 
 		command = b.compiler.generic_string();
@@ -1029,6 +1075,7 @@ void handle_build(Build& b, NS::States& new_states) noexcept {
 
 		break;
 	}
+	case NS::Build::Target::Shared :
 	case NS::Build::Target::Exe :
 	case NS::Build::Target::Static :
 	{
@@ -1065,10 +1112,10 @@ void handle_build(Build& b, NS::States& new_states) noexcept {
 			execute(b, c);
 			for (auto& x : b.post_compile) execute(b, x);
 		}
-		if (b.target == NS::Build::Target::Exe) {
-			c = compile_command_link_exe(b);
-		} else {
+		if (b.target == NS::Build::Target::Static) {
 			c = compile_command_link_static(b);
+		} else {
+			c = compile_command_link_exe(b);
 		}
 		// in the link phase we add the executable(s) to the install path.
 		for (auto& x : c.entries) if (x.output) {
@@ -1190,7 +1237,7 @@ int main(int argc, char** argv) {
 	if (!b.flags.scratch && std::filesystem::is_regular_file(flags.get_state_path()))
 		old_states = NS::States::load_from_file(flags.get_state_path());
 
-	if (!flags.no_watch_source_changed) {
+	if (!flags.no_watch_source_changed || flags.recompile_build_script) {
 
 		// I don't want to comment on these stupid lines...
 		// at least it's portable :^)
@@ -1207,7 +1254,7 @@ int main(int argc, char** argv) {
 		// WHEN C++ WILL SORT ITS SHIT OUT... We will be able to just use the UNIX_TIMESTAMP macro
 		// here, and save us a variable in the state.txt
 
-		if (last_write > old_states.last_write_build_script) {
+		if (last_write > old_states.last_write_build_script || flags.recompile_build_script) {
 			printf("Detected change in %s... Recompiling.\n", NS::Env::Build_Script_Path);
 
 			old_states.last_write_build_script = last_write;
@@ -1288,7 +1335,12 @@ std::string NS::details::get_cli_flag(
 	case NS::Cli_Opts::Debug_Symbol_Compile :
 		X("-g -gcodeview -gno-column-info", "/Z7");
 
-	case NS::Cli_Opts::Arch :
+	case NS::Cli_Opts::No_Default_Lib : {
+		// >TODO(Tackwin): here we need to check the linker's cli instead of the compiler.
+		X("-Xlinker /NODEFAULTLIB", "/NODEFAULTLIB");
+	}
+
+	case NS::Cli_Opts::Arch_32 :
 		X(std::string("-m32"), "");
 	case NS::Cli_Opts::Native :
 		X(std::string("-march=native"), "");
@@ -1358,7 +1410,7 @@ constexpr char BASE64_TABLE[] =  {'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
                                   'w', 'x', 'y', 'z', '0', '1', '2', '3',
                                   '4', '5', '6', '7', '8', '9', '+', '-'};
 
-std::string unique_name(const std::filesystem::path& path) noexcept {
+std::string unique_name(const Build& build, const std::filesystem::path& path) noexcept {
 	std::string ret = path.filename().generic_string();
 	auto h = hash(path.generic_string());
 
@@ -1367,7 +1419,7 @@ std::string unique_name(const std::filesystem::path& path) noexcept {
 	ret += BASE64_TABLE[(h / 64) % 64];
 	ret += BASE64_TABLE[(h / (64 * 64)) % 64];
 
-	return ret;
+	return build.name + ret;
 }
 
 #undef NS

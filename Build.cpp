@@ -6,7 +6,9 @@
 clang++ -o ./Build.exe .\Build.cpp  -std=c++17
 */
 
-Build main(Flags flags) noexcept {
+EASE_WATCH_ME
+
+Build build(Flags flags) noexcept {
 	Build build = Build::get_default(flags);
 
 	build.name = "Ease";

@@ -73,12 +73,14 @@ struct Flags {
 	bool show_help = false;
 	bool link_only = false;
 	bool no_inline = false;
+	bool no_default_lib = false;
 	bool compile_native = false;
 	bool generate_debug = false;
 	bool no_install_path = false;
 	bool show_help_install = false;
 	bool no_compile_commands = false;
 	bool run_after_compilation = false;
+	bool recompile_build_script = false;
 	bool no_watch_source_changed = false;
 
 	size_t j = 0;
@@ -247,6 +249,7 @@ struct Build {
 	Build_State current_state;
 
 	static Build get_default(Flags flags = {}) noexcept;
+	static Build sequentials(std::vector<Build> builds) noexcept;
 
 	void add_header(const std::filesystem::path& f) noexcept;
 	void add_source(const std::filesystem::path& f) noexcept;
@@ -262,8 +265,10 @@ struct Build {
 	void add_export(const std::filesystem::path& from, const std::filesystem::path& to) noexcept;
 
 	void add_define(std::string str) noexcept;
+	void add_debug_defines() noexcept;
 
 	void add_default_win32() noexcept;
+	void no_warnings_win32() noexcept;
 };
 
 enum class Cli_Opts {
@@ -281,10 +286,11 @@ enum class Cli_Opts {
 	Optimisation,
 	No_Optimisation,
 	Preprocess,
-	Arch,
+	Arch_32,
 	Assembly_Output,
 	Debug_Symbol_Compile,
 	Debug_Symbol_Link,
+	No_Default_Lib,
 	OpenMP,
 	Native,
 	No_Inline
@@ -301,6 +307,8 @@ struct Env {
 
 	static const char* Build_Script_Path;
 };
+
+#define EASE_WATCH_ME const char* EASE_NAMESPACE::Env::Build_Script_Path = __FILE__;
 
 namespace details {
 	std::string escape(std::string_view in) noexcept;
