@@ -987,7 +987,7 @@ NS::Commands compile_command_incremetal_check(const NS::Build& b) noexcept {
 	return commands;
 }
 
-void execute(const NS::Build& build, const NS::Commands& c) noexcept {
+bool execute(const NS::Build& build, const NS::Commands& c) noexcept {
 	#ifndef NO_THREAD
 	std::vector<std::thread> threads;
 	std::atomic<bool> stop_flag = false;
@@ -1046,6 +1046,7 @@ void execute(const NS::Build& build, const NS::Commands& c) noexcept {
 		printf("There was an error in the build. There should be more informations above.");
 	}
 #endif
+	return !stop_flag;
 }
 
 void add_install_path(NS::Build& b) noexcept {
