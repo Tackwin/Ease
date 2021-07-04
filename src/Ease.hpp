@@ -222,6 +222,8 @@ struct Build {
 
 	bool invert_header_implementation_define = false;
 
+	size_t stack_size = 8196;
+
 	std::filesystem::path compiler;
 	std::filesystem::path archiver; // I don't really like to need llvm-ar or something
 	                                // i feel like we could do this ourself, it's just concatenating
@@ -296,6 +298,7 @@ enum class Cli_Opts {
 	No_Default_Lib,
 	OpenMP,
 	Native,
+	Stack_Size,
 	No_Inline
 };
 
