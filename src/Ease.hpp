@@ -71,6 +71,7 @@ struct Flags {
 	bool scratch = false;
 	bool install = false;
 	bool assembly = false;
+	bool fast_math = false;
 	bool show_help = false;
 	bool link_only = false;
 	bool no_inline = false;
@@ -289,6 +290,7 @@ enum class Cli_Opts {
 	Time_Trace,
 	Define,
 	Optimisation,
+	Fast_Math,
 	No_Optimisation,
 	Preprocess,
 	Arch_32,

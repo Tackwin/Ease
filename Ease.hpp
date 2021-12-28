@@ -71,6 +71,7 @@ struct Flags {
 	bool scratch = false;
 	bool install = false;
 	bool assembly = false;
+	bool fast_math = false;
 	bool show_help = false;
 	bool link_only = false;
 	bool no_inline = false;
@@ -289,6 +290,7 @@ enum class Cli_Opts {
 	Time_Trace,
 	Define,
 	Optimisation,
+	Fast_Math,
 	No_Optimisation,
 	Preprocess,
 	Arch_32,
@@ -354,6 +356,9 @@ using namespace Ease;
 
 #define NS EASE_NAMESPACE
 
+// >TODO(Tackwin): We need to move from using clang++ -Wl style options to pass
+// args to the linker to invoking directly ld or mold or lld or link.exe or whatever
+
 // trim from start (in place)
 void ltrim(std::string &s) {
 	s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
@@ -403,6 +408,9 @@ NS::Flags NS::Flags::parse(int argc, char** argv) noexcept {
 		}
 		if (strcmp(it, "--native") == 0) {
 			flags.compile_native = true;
+		}
+		if (strcmp(it, "--fast-math") == 0) {
+			flags.fast_math = true;
 		}
 		if (strcmp(it, "--debug") == 0) {
 			flags.generate_debug = true;
@@ -538,6 +546,9 @@ const char* NS::Flags::help_message() noexcept {
 
 	"--openmp                     Will compile with openmp if available.\n"
 	"                    Exemple: ./Build.exe --openmp\n\n"
+
+	"--fast-math                  Enable fast math optimisation.\n"
+	"                    Exemple: ./Build.exe --fast-math\n\n"
 
 	"--silent                     Will disable any write to the stdout.\n"
 	"                    Exemple: ./Build.exe --silent"
@@ -677,6 +688,7 @@ size_t NS::Flags::hash() const noexcept {
 	h = combine(h, install);
 	h = combine(h, assembly);
 	h = combine(h, no_inline);
+	h = combine(h, fast_math);
 	h = combine(h, show_help);
 	h = combine(h, link_only);
 	h = combine(h, profile_build);
@@ -718,6 +730,7 @@ size_t NS::Flags::rebuild_hash() const noexcept {
 	h = combine(h, assembly);
 	h = combine(h, no_inline);
 	h = combine(h, link_only);
+	h = combine(h, fast_math);
 	h = combine(h, compile_native);
 	h = combine(h, generate_debug);
 	h = combine(h, state_file);
@@ -1131,6 +1144,7 @@ NS::Commands compile_command_object(const NS::Build_State& state, const NS::Buil
 		else
 			command += " " + get_cli_flag(b.cli, Cli_Opts::No_Optimisation);
 
+		if (b.flags.fast_math) command += " " + get_cli_flag(b.cli, Cli_Opts::Fast_Math);
 
 		command += " " + get_cli_flag(b.cli, Cli_Opts::Object_Output, o.generic_string());
 
@@ -1201,6 +1215,7 @@ NS::Commands compile_assembly(const NS::Build_State& state, const NS::Build& b) 
 			command += " " + get_cli_flag(b.cli, Cli_Opts::No_Optimisation);
 
 		if (b.flags.no_inline) command += " " + get_cli_flag(b.cli, Cli_Opts::No_Inline);
+		if (b.flags.fast_math) command += " " + get_cli_flag(b.cli, Cli_Opts::Fast_Math);
 
 
 		for (auto& d : b.defines) command += " " + get_cli_flag(b.cli, Cli_Opts::Define, d);
@@ -1692,6 +1707,8 @@ std::string NS::details::get_cli_flag(
 		X("-fno-inline", "/Ob0");
 	case NS::Cli_Opts::OpenMP :
 		X("-fopenmp", "/OpenMP");
+	case NS::Cli_Opts::Fast_Math :
+		X("-ffast-math", "/fp:fast");
 	case NS::Cli_Opts::Debug_Symbol_Link :
 		X("-g -gno-column-info", "/DEBUG");
 	case NS::Cli_Opts::Debug_Symbol_Compile :
@@ -1702,12 +1719,15 @@ std::string NS::details::get_cli_flag(
 		X("-Xlinker /NODEFAULTLIB", "/NODEFAULTLIB");
 	}
 
+	// >TODO(Tackwin): The stack size is fucked
+	// >TODO(Tackwin): I think there is a bug with the arch 32 cli opts.
+
 	case NS::Cli_Opts::Time_Trace :
 		X(std::string("-ftime-trace"), "");
 	case NS::Cli_Opts::Stack_Size :
-		X(std::string("-Wl,-stack_size -Wl,") + param.data(), "");
+		// X(std::string("-Wl,-stack_size -Wl,") + param.data(), "");
 	case NS::Cli_Opts::Arch_32 :
-		X(std::string("-m32"), "");
+		// X(std::string("-m32"), "");
 	case NS::Cli_Opts::Native :
 		X(std::string("-march=native"), "");
 	case NS::Cli_Opts::Compile :
