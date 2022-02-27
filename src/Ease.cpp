@@ -55,6 +55,7 @@ void dump_to_file(std::string_view str, const std::filesystem::path& p) noexcept
 std::string read_file(const std::filesystem::path& p) noexcept;
 
 // ===================== FLAGS
+// >FLAGS
 NS::Flags NS::Flags::parse(int argc, char** argv) noexcept {
 	NS::Flags flags;
 
@@ -95,6 +96,9 @@ NS::Flags NS::Flags::parse(int argc, char** argv) noexcept {
 		}
 		if (strcmp(it, "--silent") == 0) {
 			flags.silent = true;
+		}
+		if (strcmp(it, "--no-simd") == 0) {
+			flags.no_simd = true;
 		}
 		if (strcmp(it, "--release") == 0) {
 			flags.release = true;
@@ -186,6 +190,7 @@ NS::Flags NS::Flags::parse(int argc, char** argv) noexcept {
 	return flags;
 }
 
+// >FLAGS
 const char* NS::Flags::help_message() noexcept {
 	return
 	" ====================================== Optional flags ======================================\n"
@@ -201,7 +206,11 @@ const char* NS::Flags::help_message() noexcept {
 
 	"--help-install               Print informations about the install system.\n"
 	"                    Exemple: ./Build.exe --help-install\n\n"
-	
+
+	"--no-simd                    Disable the generation of simd instruction and usage of vector.\n"
+	"                             registers.\n"
+	"                    Exemple: ./Build.exe --no-simd\n\n"
+
 	"-j <n>                        Will use n threads.\n"
 	"                    Exemple: ./Build.exe -j 4\n\n"
 
@@ -333,6 +342,7 @@ namespace std {
 };
 
 
+// >FLAGS
 size_t NS::Flags::hash() const noexcept {
 	auto combine = [](auto seed, auto v) {
 		std::hash<std::remove_cv_t<decltype(v)>> hasher;
@@ -347,6 +357,7 @@ size_t NS::Flags::hash() const noexcept {
 	h = combine(h, release);
 	h = combine(h, scratch);
 	h = combine(h, install);
+	h = combine(h, no_simd);
 	h = combine(h, assembly);
 	h = combine(h, no_inline);
 	h = combine(h, fast_math);
@@ -376,6 +387,7 @@ size_t NS::Flags::hash() const noexcept {
 	return h;
 }
 
+// >FLAGS
 size_t NS::Flags::rebuild_hash() const noexcept {
 	auto combine = [](auto seed, auto v) {
 		std::hash<std::remove_cv_t<decltype(v)>> hasher;
@@ -387,6 +399,7 @@ size_t NS::Flags::rebuild_hash() const noexcept {
 	h = combine(h, clean);
 	h = combine(h, openmp);
 	h = combine(h, release);
+	h = combine(h, no_simd);
 	h = combine(h, scratch);
 	h = combine(h, assembly);
 	h = combine(h, no_inline);
@@ -553,6 +566,11 @@ void NS::Build::add_export(
 	y = y.lexically_normal();
 	export_files.push_back(x);
 	export_dest_files.push_back(y);
+}
+
+std::filesystem::path NS::details::get_output_dir(const Build& b) noexcept {
+	if (b.flags.output) return *b.flags.output;
+	return "";
 }
 
 std::filesystem::path NS::details::get_output_path(const Build& b) noexcept {
@@ -792,7 +810,11 @@ NS::Commands compile_command_object(const NS::Build_State& state, const NS::Buil
 		command += " " + get_cli_flag(b.cli, Cli_Opts::Compile);
 		command += " " + get_cli_flag(b.cli, Cli_Opts::Std_Version, b.std_ver);
 
+		// >TODO(Tackwin): Must this be here ?
+		if (b.triplet)              command += " -target " + *b.triplet;
+
 		if (b.flags.openmp)         command += " " + get_cli_flag(b.cli, Cli_Opts::OpenMP);
+		if (b.flags.no_simd)        command += " " + get_cli_flag(b.cli, Cli_Opts::No_SIMD);
 		if (b.flags.no_inline)      command += " " + get_cli_flag(b.cli, Cli_Opts::No_Inline);
 		if (b.flags.profile_build)  command += " " + get_cli_flag(b.cli, Cli_Opts::Time_Trace);
 		if (b.flags.compile_native) command += " " + get_cli_flag(b.cli, Cli_Opts::Native);
@@ -866,8 +888,9 @@ NS::Commands compile_assembly(const NS::Build_State& state, const NS::Build& b) 
 		command += " " + get_cli_flag(b.cli, Cli_Opts::Assembly_Output, o.generic_string());
 
 		if (b.flags.compile_native) command += " " + get_cli_flag(b.cli, Cli_Opts::Native);
+		if (b.flags.no_simd)        command += " " + get_cli_flag(b.cli, Cli_Opts::No_SIMD);
 		if (b.flags.openmp) command += " " + get_cli_flag(b.cli, Cli_Opts::OpenMP);
-		if (b.flags.release){
+		if (b.flags.release) {
 			std::string param = "3";
 			if (b.flags.release_level) param = std::to_string(*b.flags.release_level);
 			command += " " + get_cli_flag(b.cli, Cli_Opts::Optimisation, param);
@@ -1085,6 +1108,7 @@ void handle_build(Build& b, NS::States& new_states) noexcept {
 		b.flags.scratch = true;
 	}
 
+	bool successful = true;
 	switch (b.target) {
 	case NS::Build::Target::Header_Only : {
 		for (auto& x : b.pre_compile) execute(b, x);
@@ -1111,6 +1135,15 @@ void handle_build(Build& b, NS::States& new_states) noexcept {
 
 		break;
 	}
+	case NS::Build::Target::Custom :
+	{
+		for (auto& x : b.pre_compile) execute(b, x);
+		for (auto& x : b.post_compile) execute(b, x);
+		for (auto& x : b.pre_link) execute(b, x);
+		for (auto& x : b.post_link) execute(b, x);
+		if (b.flags.run_after_compilation && b.run_function) b.run_function();
+		break;
+	}
 	case NS::Build::Target::Shared :
 	case NS::Build::Target::Exe :
 	case NS::Build::Target::Static :
@@ -1120,7 +1153,6 @@ void handle_build(Build& b, NS::States& new_states) noexcept {
 		std::filesystem::create_directory(b.flags.get_build_path());
 		std::filesystem::create_directory(b.flags.get_temp_path());
 
-		bool successful = true;
 		for (auto& x : b.pre_compile) successful &= execute(b, x);
 
 		::NS::Commands c;
@@ -1163,7 +1195,8 @@ void handle_build(Build& b, NS::States& new_states) noexcept {
 		successful &= execute(b, c);
 		for (auto& x : b.post_link) successful &= execute(b, x);
 
-		if (b.target == NS::Build::Target::Exe && b.flags.run_after_compilation && successful) {
+		if (b.target == NS::Build::Target::Exe && b.flags.run_after_compilation && successful)
+		if (!b.run_function) {
 			std::string run = NS::details::get_output_path(b).generic_string();
 			for (auto& x : b.flags.rest_args) run += " " + x;
 			if (!Env::Win32) run = "./" + run;
@@ -1177,6 +1210,7 @@ void handle_build(Build& b, NS::States& new_states) noexcept {
 	default:
 		break;
 	}
+	if (b.flags.run_after_compilation && b.run_function && successful) b.run_function();
 
 	if (b.flags.install) NS::details::install_build(b);
 
@@ -1205,8 +1239,13 @@ auto stupid_function_that_convert_between_unspecified_file_clock_to_system_clock
 	return time_point_cast<system_clock::duration>(tp - TP::clock::now() + system_clock::now());
 }
 
+
+#ifndef NAME
+#define NAME build
+#endif
+
 int main(int argc, char** argv) {
-	extern NS::Build build(NS::Flags flags) noexcept;
+	extern NS::Build NAME(NS::Flags flags) noexcept;
 
 	if (argc > 2 && strcmp(argv[1], "__EASE__STAGE_1__") == 0) {
 		std::string move_original = "mv ";
@@ -1246,7 +1285,7 @@ int main(int argc, char** argv) {
 	NS::Working_Directory = std::filesystem::absolute(std::filesystem::current_path());
 	auto flags = NS::Flags::parse(argc - 1, argv + 1);
 
-	auto b = build(flags);
+	auto b = NAME(flags);
 
 	if (flags.show_help) {
 		printf("%s", NS::Flags::help_message());
@@ -1383,6 +1422,8 @@ std::string NS::details::get_cli_flag(
 	// >TODO(Tackwin): The stack size is fucked
 	// >TODO(Tackwin): I think there is a bug with the arch 32 cli opts.
 
+	case NS::Cli_Opts::No_SIMD:
+		X("-mno-sse", "");
 	case NS::Cli_Opts::Time_Trace :
 		X(std::string("-ftime-trace"), "");
 	case NS::Cli_Opts::Stack_Size :

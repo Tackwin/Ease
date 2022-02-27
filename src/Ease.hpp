@@ -47,6 +47,7 @@ exit
 #include <vector>
 #include <string>
 #include <optional>
+#include <functional>
 #include <filesystem>
 #include <unordered_map>
 
@@ -60,6 +61,7 @@ static std::filesystem::path Working_Directory;
 
 struct Flags {
 
+	// >FLAGS
 	// I want to make optional bool because user code might want to knwo if a user set someting in
 	// the cmd.
 	// For now i'm keeping it as everything is false by default, since you can only set a flag to
@@ -70,6 +72,7 @@ struct Flags {
 	bool release = false;
 	bool scratch = false;
 	bool install = false;
+	bool no_simd = false;
 	bool assembly = false;
 	bool fast_math = false;
 	bool show_help = false;
@@ -197,6 +200,7 @@ struct Build {
 		Assembly,
 		Static,
 		Shared,
+		Custom,
 		None, // Use for export only for instance.
 		Exe
 	};
@@ -213,6 +217,7 @@ struct Build {
 	};
 
 	std::string name;
+	std::optional<std::string> triplet;
 
 	Flags flags;
 
@@ -250,6 +255,8 @@ struct Build {
 
 	std::vector<std::filesystem::path> to_install;
 
+	std::function<void(void)> run_function = nullptr;
+
 	Build_Ptr next;
 	Build_State current_state;
 
@@ -276,6 +283,7 @@ struct Build {
 	void no_warnings_win32() noexcept;
 };
 
+// >FLAGS
 enum class Cli_Opts {
 	Compile,
 	Link_Shared,
@@ -286,6 +294,7 @@ enum class Cli_Opts {
 	Std_Version,
 	Include,
 	Link,
+	No_SIMD,
 	Lib_Path,
 	Time_Trace,
 	Define,
@@ -326,6 +335,7 @@ namespace details {
 	) noexcept;
 	void install_build(const Build& b) noexcept;
 	std::vector<std::filesystem::path> get_installed_dirs(const Build& b) noexcept;
+	std::filesystem::path get_output_dir(const Build& b) noexcept;
 	std::filesystem::path get_output_path(const Build& b) noexcept;
 };
 
